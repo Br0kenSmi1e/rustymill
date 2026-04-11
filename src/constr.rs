@@ -24,6 +24,7 @@ pub enum Side {
 pub struct LastStepIndices {
     pub left_ext: u64,
     pub right_ext: u64,
+    pub sums: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -126,6 +127,7 @@ pub fn build_constr_graphs(
             let lsi = LastStepIndices {
                 left_ext,
                 right_ext,
+                sums: eval.contracted_sums,
             };
 
             let left_sub = make_sub_term(term, left_subset);
@@ -209,4 +211,55 @@ fn ensure_vertex(
         sides.push(side);
         VertexId(next_id)
     })
+}
+
+// ---------------------------------------------------------------------------
+// Cost coefficients
+// ---------------------------------------------------------------------------
+
+/// Precomputed cost coefficients for a constriction graph's index pattern.
+#[derive(Clone, Debug)]
+pub struct CostCoeffs {
+    pub final_cost: u64,
+    pub prep_left: u64,
+    pub prep_right: u64,
+}
+
+/// Compute cost coefficients for a given index pattern.
+/// Uses the parenth IndexInfo to look up index sizes.
+pub fn compute_cost_coeffs(
+    last_step: &LastStepIndices,
+    info: &crate::parenth::IndexInfo,
+) -> CostCoeffs {
+    let left_ext_size = info.size_product_ext(last_step.left_ext).max(1);
+    let right_ext_size = info.size_product_ext(last_step.right_ext).max(1);
+    let sum_size = info.size_product_sum(last_step.sums).max(1);
+    let ext_size = left_ext_size * right_ext_size;
+
+    let contraction = if sum_size == 1 {
+        ext_size
+    } else {
+        2 * ext_size * sum_size
+    };
+    let final_cost = contraction + ext_size;
+
+    let prep_left = left_ext_size * sum_size;
+    let prep_right = right_ext_size * sum_size;
+
+    CostCoeffs {
+        final_cost,
+        prep_left,
+        prep_right,
+    }
+}
+
+/// Compute gross savings for adding a vertex to each side.
+/// Returns (gross_for_adding_left, gross_for_adding_right).
+pub fn gross_saving(coeffs: &CostCoeffs, n_left: usize, n_right: usize) -> (i64, i64) {
+    if n_left == 0 || n_right == 0 {
+        return (0, 0);
+    }
+    let gl = (n_right as i64) * (coeffs.final_cost as i64) - (coeffs.prep_left as i64);
+    let gr = (n_left as i64) * (coeffs.final_cost as i64) - (coeffs.prep_right as i64);
+    (gl, gr)
 }

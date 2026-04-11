@@ -1,6 +1,6 @@
 use num::rational::Ratio;
 
-use rustymill::constr::{build_constr_graphs, Side};
+use rustymill::constr::{build_constr_graphs, compute_cost_coeffs, gross_saving, Side};
 use rustymill::parenth::{parenthesize, ParenthResult};
 use rustymill::repr::*;
 
@@ -193,4 +193,41 @@ fn test_build_constr_graphs_single_factor_term_excluded() {
 
     // 2 edges, same as the shared-factor case.
     assert_eq!(g.edges.len(), 2);
+}
+
+#[test]
+fn test_cost_coeffs() {
+    let (comp, def, prs) = make_shared_factor_def();
+    let graphs = build_constr_graphs(&def, &comp, &prs);
+    let graph = &graphs[0];
+
+    let coeffs = compute_cost_coeffs(&graph.last_step, &prs[0].info);
+    // All occ=10. left_ext={a}=10, right_ext={b}=10, sums={c}=10
+    // ext_size = 10*10 = 100, sum_size = 10
+    // final_cost = 2*100*10 + 100 = 2100
+    // prep_left = 10*10 = 100
+    // prep_right = 10*10 = 100
+    assert_eq!(coeffs.final_cost, 2100);
+    assert_eq!(coeffs.prep_left, 100);
+    assert_eq!(coeffs.prep_right, 100);
+}
+
+#[test]
+fn test_gross_saving() {
+    let (comp, def, prs) = make_shared_factor_def();
+    let graphs = build_constr_graphs(&def, &comp, &prs);
+    let graph = &graphs[0];
+    let coeffs = compute_cost_coeffs(&graph.last_step, &prs[0].info);
+
+    let (gl, gr) = gross_saving(&coeffs, 1, 1);
+    // gl = 1 * 2100 - 100 = 2000
+    // gr = 1 * 2100 - 100 = 2000
+    assert_eq!(gl, 2000);
+    assert_eq!(gr, 2000);
+
+    let (gl, gr) = gross_saving(&coeffs, 2, 1);
+    // gl = 1 * 2100 - 100 = 2000
+    // gr = 2 * 2100 - 100 = 4100
+    assert_eq!(gl, 2000);
+    assert_eq!(gr, 4100);
 }
