@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
-use crate::repr::{Index, IndexId, Range, Term};
+use crate::repr::{Factor, Index, IndexId, Range, RangeId, TensorComputation, TensorDef, TensorId, Term};
+use num::rational::Ratio;
 
 /// Bitmask of factors in a subset (up to 64 factors).
 pub type FactorSubset = u64;
@@ -340,4 +341,166 @@ impl Iterator for SubsetIter {
 
         Some(result)
     }
+}
+
+/// Extract the optimal contraction tree as a sequence of TensorDefs.
+///
+/// Walks the optimal eval chain from the full factor set down to individual factors,
+/// creating intermediate TensorDefs for each binary contraction step.
+/// Returns the new definitions in evaluation order (dependencies first).
+pub fn extract_optimal(
+    result: &ParenthResult,
+    term: &Term,
+    ext_indices: &[Index],
+    comp: &mut TensorComputation,
+) -> Vec<TensorDef> {
+    let n = result.info.n_factors;
+    if n <= 1 {
+        return Vec::new();
+    }
+
+    let full_mask = (1u64 << n) - 1;
+    let mut defs = Vec::new();
+    let mut subset_to_tensor: HashMap<FactorSubset, TensorId> = HashMap::new();
+
+    // Map single factors to their original tensor IDs
+    for (i, factor) in term.factors.iter().enumerate() {
+        subset_to_tensor.insert(1u64 << i, factor.tensor);
+    }
+
+    // Build index mappings: bit position -> (IndexId, RangeId)
+    let sum_index_map: Vec<(IndexId, RangeId)> = term.sum_indices.iter()
+        .map(|idx| (idx.id, idx.range))
+        .collect();
+    let ext_index_map: Vec<(IndexId, RangeId)> = ext_indices.iter()
+        .map(|idx| (idx.id, idx.range))
+        .collect();
+
+    // Collect subsets in the optimal eval tree, process small to large
+    let mut subsets_to_process: Vec<FactorSubset> = Vec::new();
+    collect_optimal_subsets(result, full_mask, &mut subsets_to_process);
+    subsets_to_process.retain(|s| s.count_ones() >= 2);
+    subsets_to_process.sort_by_key(|s| s.count_ones());
+    subsets_to_process.dedup();
+
+    for &subset in &subsets_to_process {
+        let interm = &result.memoir[&subset];
+        let best_eval = interm.evals.iter().min_by_key(|e| e.cost).unwrap();
+
+        let left_tensor = subset_to_tensor[&best_eval.left];
+        let right_tensor = subset_to_tensor[&best_eval.right];
+
+        // External indices for this intermediate:
+        // = original ext indices alive in this subset + uncontracted sum indices
+        let contracted = best_eval.contracted_sums;
+        let alive_exts = interm.ext_indices;
+        let alive_sums = interm.sum_indices; // open (uncontracted) sums for this subset
+
+        let mut def_ext_indices = Vec::new();
+        // Add original external indices
+        let mut m = alive_exts;
+        while m != 0 {
+            let bit = m.trailing_zeros() as usize;
+            def_ext_indices.push(Index {
+                id: ext_index_map[bit].0,
+                range: ext_index_map[bit].1,
+            });
+            m &= m - 1;
+        }
+        // Add uncontracted summation indices (they're "external" to this intermediate)
+        let mut m = alive_sums;
+        while m != 0 {
+            let bit = m.trailing_zeros() as usize;
+            def_ext_indices.push(Index {
+                id: sum_index_map[bit].0,
+                range: sum_index_map[bit].1,
+            });
+            m &= m - 1;
+        }
+
+        // Contracted summation indices for this step
+        let mut step_sums = Vec::new();
+        let mut m = contracted;
+        while m != 0 {
+            let bit = m.trailing_zeros() as usize;
+            step_sums.push(Index {
+                id: sum_index_map[bit].0,
+                range: sum_index_map[bit].1,
+            });
+            m &= m - 1;
+        }
+
+        // Collect indices for left and right operand references
+        let left_indices = collect_operand_indices(
+            &result.memoir[&best_eval.left], &sum_index_map, &ext_index_map,
+        );
+        let right_indices = collect_operand_indices(
+            &result.memoir[&best_eval.right], &sum_index_map, &ext_index_map,
+        );
+
+        // Create new intermediate tensor
+        let slots: Vec<RangeId> = def_ext_indices.iter().map(|idx| idx.range).collect();
+        let new_tensor = comp.add_tensor(&slots, vec![]);
+
+        let new_term = Term {
+            coeff: if subset == full_mask { term.coeff.clone() } else { Ratio::from_integer(1) },
+            sum_indices: step_sums,
+            factors: vec![
+                Factor { tensor: left_tensor, indices: left_indices },
+                Factor { tensor: right_tensor, indices: right_indices },
+            ],
+        };
+
+        let def = TensorDef {
+            base: new_tensor,
+            ext_indices: def_ext_indices,
+            terms: vec![new_term],
+        };
+
+        subset_to_tensor.insert(subset, new_tensor);
+        defs.push(def);
+    }
+
+    defs
+}
+
+/// Recursively collect all subsets in the optimal eval tree.
+fn collect_optimal_subsets(
+    result: &ParenthResult,
+    subset: FactorSubset,
+    out: &mut Vec<FactorSubset>,
+) {
+    if subset.count_ones() <= 1 {
+        return;
+    }
+    out.push(subset);
+    let interm = &result.memoir[&subset];
+    let best_eval = interm.evals.iter().min_by_key(|e| e.cost).unwrap();
+    collect_optimal_subsets(result, best_eval.left, out);
+    collect_optimal_subsets(result, best_eval.right, out);
+}
+
+/// Collect the IndexIds for an operand (its external + open sum indices).
+fn collect_operand_indices(
+    interm: &Interm,
+    sum_map: &[(IndexId, RangeId)],
+    ext_map: &[(IndexId, RangeId)],
+) -> Vec<IndexId> {
+    let mut indices = Vec::new();
+
+    let mut m = interm.ext_indices;
+    while m != 0 {
+        let bit = m.trailing_zeros() as usize;
+        indices.push(ext_map[bit].0);
+        m &= m - 1;
+    }
+
+    let mut m = interm.sum_indices;
+    while m != 0 {
+        let bit = m.trailing_zeros() as usize;
+        indices.push(sum_map[bit].0);
+        m &= m - 1;
+    }
+
+    indices
 }
