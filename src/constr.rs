@@ -5,7 +5,7 @@ use num::rational::Ratio;
 
 use crate::canon::{canon_term, CanonTerm};
 use crate::parenth::{FactorSubset, ParenthResult};
-use crate::repr::{Index, IndexId, Rational, TensorComputation, TensorDef, Term};
+use crate::repr::{Factor, Index, IndexId, Rational, TensorComputation, TensorDef, TensorId, Term};
 
 // ---------------------------------------------------------------------------
 // Data structures
@@ -594,4 +594,292 @@ pub fn update_delta(
     }
 
     Some(updated)
+}
+
+// ---------------------------------------------------------------------------
+// Factorization conversion
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Debug)]
+pub struct Factorization {
+    /// Which terms in the original TensorDef are consumed.
+    pub terms_consumed: Vec<usize>,
+    /// New intermediate TensorDefs (0-2: left sum, right sum).
+    pub intermediates: Vec<TensorDef>,
+    /// The term that replaces the consumed terms.
+    pub replacement_term: Term,
+    /// Cost saving (positive = beneficial).
+    pub saving: i64,
+}
+
+/// Convert bicliques into concrete `Factorization` records.
+///
+/// Builds constriction graphs, finds bicliques, and converts each profitable
+/// biclique into a `Factorization` with intermediate TensorDefs and a
+/// replacement term.
+pub fn factorizations(
+    def: &TensorDef,
+    parenth_results: &[ParenthResult],
+    comp: &TensorComputation,
+    next_tensor_id: TensorId,
+) -> Vec<Factorization> {
+    let graphs = build_constr_graphs(def, comp, parenth_results);
+    let mut results = Vec::new();
+    let mut next_id = next_tensor_id.0;
+
+    for graph in &graphs {
+        if graph.edges.is_empty() {
+            continue;
+        }
+
+        let first_term_idx = graph.edges[0].2.term_idx;
+        let info = &parenth_results[first_term_idx].info;
+        let coeffs = compute_cost_coeffs(&graph.last_step, info);
+        let bicliques = find_bicliques(graph, &coeffs);
+
+        for bc in bicliques {
+            if bc.saving <= 0 {
+                continue;
+            }
+
+            // Validate that the biclique is a complete bipartite subgraph:
+            // every left-right pair must have at least one edge.
+            let is_complete = bc.left_verts.iter().all(|(lv, _)| {
+                bc.right_verts
+                    .iter()
+                    .all(|(rv, _)| !graph.edges_between(*lv, *rv).is_empty())
+            });
+            if !is_complete {
+                continue;
+            }
+
+            // Collect consumed term indices from bitmask.
+            let terms_consumed = bits_to_vec(bc.terms_used);
+
+            // Use the first consumed term to map sum-index bit positions to Index objects.
+            let repr_term = &def.terms[terms_consumed[0]];
+
+            let contracted_sums = bits_to_indices(graph.last_step.sums, &repr_term.sum_indices);
+            let contracted_ids: HashSet<IndexId> =
+                contracted_sums.iter().map(|i| i.id).collect();
+
+            let left_ext = bits_to_indices(graph.last_step.left_ext, &def.ext_indices);
+            let right_ext = bits_to_indices(graph.last_step.right_ext, &def.ext_indices);
+
+            let mut intermediates = Vec::new();
+
+            // --- left side ---
+            let (left_tid, left_indices) = build_side_ref(
+                &bc.left_verts,
+                Side::Left,
+                graph,
+                def,
+                parenth_results,
+                &left_ext,
+                &contracted_sums,
+                &contracted_ids,
+                &mut intermediates,
+                &mut next_id,
+            );
+
+            // --- right side ---
+            let (right_tid, right_indices) = build_side_ref(
+                &bc.right_verts,
+                Side::Right,
+                graph,
+                def,
+                parenth_results,
+                &right_ext,
+                &contracted_sums,
+                &contracted_ids,
+                &mut intermediates,
+                &mut next_id,
+            );
+
+            let coeff = bc
+                .leading_coeff
+                .unwrap_or_else(|| Ratio::from_integer(1));
+
+            let replacement_term = Term {
+                coeff,
+                sum_indices: contracted_sums,
+                factors: vec![
+                    Factor {
+                        tensor: left_tid,
+                        indices: left_indices,
+                    },
+                    Factor {
+                        tensor: right_tid,
+                        indices: right_indices,
+                    },
+                ],
+            };
+
+            results.push(Factorization {
+                terms_consumed,
+                intermediates,
+                replacement_term,
+                saving: bc.saving,
+            });
+        }
+    }
+
+    results
+}
+
+// ---------------------------------------------------------------------------
+// Factorization helpers
+// ---------------------------------------------------------------------------
+
+/// Expand a bitmask into a sorted Vec of set-bit positions.
+fn bits_to_vec(mut mask: u64) -> Vec<usize> {
+    let mut out = Vec::new();
+    while mask != 0 {
+        out.push(mask.trailing_zeros() as usize);
+        mask &= mask - 1;
+    }
+    out
+}
+
+/// Map set bits to the corresponding elements of `source`.
+fn bits_to_indices(mut mask: u64, source: &[Index]) -> Vec<Index> {
+    let mut out = Vec::new();
+    while mask != 0 {
+        let bit = mask.trailing_zeros() as usize;
+        out.push(source[bit].clone());
+        mask &= mask - 1;
+    }
+    out
+}
+
+/// For a vertex on a given side, find the factor subset in the original term
+/// by looking up a representative edge and replicating the normalization from
+/// `build_constr_graphs`.
+fn vertex_subset(
+    v: VertexId,
+    side: Side,
+    graph: &ConstrGraph,
+    parenth_results: &[ParenthResult],
+) -> (usize, FactorSubset) {
+    // Find any edge involving this vertex on the correct side.
+    let (_, _, ei) = match side {
+        Side::Left => graph
+            .edges
+            .iter()
+            .find(|(l, _, _)| *l == v)
+            .expect("vertex must have an edge"),
+        Side::Right => graph
+            .edges
+            .iter()
+            .find(|(_, r, _)| *r == v)
+            .expect("vertex must have an edge"),
+    };
+
+    let pr = &parenth_results[ei.term_idx];
+    let n = pr.info.n_factors;
+    let full_mask: FactorSubset = (1u64 << n) - 1;
+    let interm = &pr.memoir[&full_mask];
+    let eval = &interm.evals[ei.eval_idx];
+
+    let left_ext = pr.info.ext_bits(eval.left);
+    let right_ext = pr.info.ext_bits(eval.right);
+    let (mut ls, mut rs) = (eval.left, eval.right);
+    if left_ext > right_ext {
+        std::mem::swap(&mut ls, &mut rs);
+    }
+
+    let subset = match side {
+        Side::Left => ls,
+        Side::Right => rs,
+    };
+
+    (ei.term_idx, subset)
+}
+
+/// Build either a new intermediate TensorDef (when >1 vertex) or a direct
+/// tensor reference (single-factor single vertex).  Returns (TensorId, index
+/// list) for use in the replacement term.
+fn build_side_ref(
+    verts: &[(VertexId, Rational)],
+    side: Side,
+    graph: &ConstrGraph,
+    def: &TensorDef,
+    parenth_results: &[ParenthResult],
+    side_ext: &[Index],
+    contracted_sums: &[Index],
+    contracted_ids: &HashSet<IndexId>,
+    intermediates: &mut Vec<TensorDef>,
+    next_id: &mut u32,
+) -> (TensorId, Vec<IndexId>) {
+    // External indices of the intermediate = side's ext + contracted sums.
+    let interm_ext: Vec<Index> = side_ext
+        .iter()
+        .chain(contracted_sums.iter())
+        .cloned()
+        .collect();
+    let interm_idx_ids: Vec<IndexId> = interm_ext.iter().map(|i| i.id).collect();
+
+    if verts.len() > 1 {
+        let tid = TensorId(*next_id);
+        *next_id += 1;
+
+        let mut terms = Vec::new();
+        for &(v, ref coeff) in verts {
+            let (term_idx, subset) = vertex_subset(v, side, graph, parenth_results);
+            let sub = make_sub_term(&def.terms[term_idx], subset);
+
+            let sum_indices: Vec<Index> = sub
+                .sum_indices
+                .iter()
+                .filter(|idx| !contracted_ids.contains(&idx.id))
+                .cloned()
+                .collect();
+
+            terms.push(Term {
+                coeff: coeff.clone(),
+                sum_indices,
+                factors: sub.factors,
+            });
+        }
+
+        intermediates.push(TensorDef {
+            base: tid,
+            ext_indices: interm_ext,
+            terms,
+        });
+
+        (tid, interm_idx_ids)
+    } else {
+        // Single vertex — try to reference the original tensor directly.
+        let (term_idx, subset) = vertex_subset(verts[0].0, side, graph, parenth_results);
+        let sub = make_sub_term(&def.terms[term_idx], subset);
+
+        if sub.factors.len() == 1 {
+            let f = &sub.factors[0];
+            (f.tensor, f.indices.clone())
+        } else {
+            // Multi-factor single vertex: still need an intermediate.
+            let tid = TensorId(*next_id);
+            *next_id += 1;
+
+            let sum_indices: Vec<Index> = sub
+                .sum_indices
+                .iter()
+                .filter(|idx| !contracted_ids.contains(&idx.id))
+                .cloned()
+                .collect();
+
+            intermediates.push(TensorDef {
+                base: tid,
+                ext_indices: interm_ext,
+                terms: vec![Term {
+                    coeff: verts[0].1.clone(),
+                    sum_indices,
+                    factors: sub.factors,
+                }],
+            });
+
+            (tid, interm_idx_ids)
+        }
+    }
 }

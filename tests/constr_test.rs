@@ -1,8 +1,8 @@
 use num::rational::Ratio;
 
 use rustymill::constr::{
-    build_constr_graphs, compute_cost_coeffs, find_bicliques, gross_saving, update_delta,
-    BronKerboschState, Delta, Side,
+    build_constr_graphs, compute_cost_coeffs, factorizations, find_bicliques, gross_saving,
+    update_delta, BronKerboschState, Delta, Side,
 };
 use rustymill::parenth::{parenthesize, ParenthResult};
 use rustymill::repr::*;
@@ -379,4 +379,106 @@ fn test_find_bicliques_full_2x2() {
     assert!(full_bc.is_some(), "Should find a 2x2 biclique");
     assert_eq!(full_bc.unwrap().terms_used.count_ones(), 4);
     assert!(full_bc.unwrap().saving > 0);
+}
+
+// ---------------------------------------------------------------------------
+// Factorization tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_factorizations_shared_factor() {
+    let (comp, def, prs) = make_shared_factor_def();
+    let next_id = TensorId(comp.tensors().len() as u32);
+
+    let facts = factorizations(&def, &prs, &comp, next_id);
+
+    assert!(!facts.is_empty());
+    let best = facts.iter().max_by_key(|f| f.saving).unwrap();
+
+    assert_eq!(best.terms_consumed.len(), 2);
+    assert!(best.terms_consumed.contains(&0));
+    assert!(best.terms_consumed.contains(&1));
+    assert!(best.intermediates.len() >= 1);
+    assert!(best.saving > 0);
+}
+
+#[test]
+fn test_factorizations_full_biclique() {
+    let (comp, def, prs) = make_full_biclique_def();
+    let next_id = TensorId(comp.tensors().len() as u32);
+
+    let facts = factorizations(&def, &prs, &comp, next_id);
+
+    let full_fact = facts.iter().find(|f| f.terms_consumed.len() == 4);
+    assert!(full_fact.is_some(), "Should find 4-term factorization");
+
+    let f = full_fact.unwrap();
+    assert_eq!(f.intermediates.len(), 2);
+    assert_eq!(f.replacement_term.factors.len(), 2);
+    assert!(f.saving > 0);
+}
+
+#[test]
+fn test_factorizations_no_sharing() {
+    let mut comp = TensorComputation::new();
+    let occ = comp.add_range(10);
+    let _x = comp.add_tensor(&[occ, occ], vec![]);
+    let _y = comp.add_tensor(&[occ, occ], vec![]);
+    let _p = comp.add_tensor(&[occ, occ], vec![]);
+    let _q = comp.add_tensor(&[occ, occ], vec![]);
+    let t = comp.add_tensor(&[occ, occ], vec![]);
+
+    let a = IndexId(0);
+    let b = IndexId(1);
+    let c = IndexId(2);
+    let d = IndexId(3);
+
+    let ext = vec![
+        Index { id: a, range: occ },
+        Index { id: b, range: occ },
+    ];
+
+    let term0 = Term {
+        coeff: Ratio::from_integer(1),
+        sum_indices: vec![Index { id: c, range: occ }],
+        factors: vec![
+            Factor {
+                tensor: TensorId(0),
+                indices: vec![a, c],
+            },
+            Factor {
+                tensor: TensorId(2),
+                indices: vec![c, b],
+            },
+        ],
+    };
+    let term1 = Term {
+        coeff: Ratio::from_integer(1),
+        sum_indices: vec![Index { id: d, range: occ }],
+        factors: vec![
+            Factor {
+                tensor: TensorId(1),
+                indices: vec![a, d],
+            },
+            Factor {
+                tensor: TensorId(3),
+                indices: vec![d, b],
+            },
+        ],
+    };
+
+    let def = TensorDef {
+        base: t,
+        ext_indices: ext.clone(),
+        terms: vec![term0.clone(), term1.clone()],
+    };
+
+    let pr0 = parenthesize(&term0, &ext, comp.ranges());
+    let pr1 = parenthesize(&term1, &ext, comp.ranges());
+    let next_id = TensorId(comp.tensors().len() as u32);
+
+    let facts = factorizations(&def, &[pr0, pr1], &comp, next_id);
+
+    let profitable: Vec<_> = facts.iter().filter(|f| f.saving > 0).collect();
+    assert!(profitable.is_empty());
 }
