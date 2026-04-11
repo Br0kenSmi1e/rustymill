@@ -17,11 +17,14 @@ Depends on: `repr.rs` (types), `parenth.rs` (ParenthResult), `canon.rs` (canonic
 
 ```rust
 /// Find all profitable single-step factorizations of a TensorDef.
+/// `next_tensor_id` is the first available TensorId for new intermediates.
+/// Each Factorization assigns IDs starting from `next_tensor_id`.
 pub fn factorizations(
     def: &TensorDef,
     parenth_results: &[ParenthResult],  // one per term
     ranges: &[Range],
     tensors: &[TensorInfo],
+    next_tensor_id: TensorId,
 ) -> Vec<Factorization>;
 
 /// One profitable factorization (one biclique applied).
@@ -29,6 +32,7 @@ pub struct Factorization {
     /// Which terms in the original TensorDef are consumed.
     pub terms_consumed: Vec<usize>,
     /// New intermediate TensorDefs to add (0-2: left sum, right sum).
+    /// Uses TensorIds starting from the `next_tensor_id` passed to `factorizations()`.
     pub intermediates: Vec<TensorDef>,
     /// The term that replaces the consumed terms.
     pub replacement_term: Term,
