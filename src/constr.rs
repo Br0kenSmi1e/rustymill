@@ -340,6 +340,177 @@ impl BronKerboschState {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Biclique enumeration (Bron-Kerbosch variant)
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Debug)]
+pub struct Biclique {
+    pub left_verts: Vec<(VertexId, Rational)>,
+    pub right_verts: Vec<(VertexId, Rational)>,
+    pub leading_coeff: Option<Rational>,
+    pub terms_used: u64,
+    pub saving: i64,
+}
+
+pub fn find_bicliques(graph: &ConstrGraph, coeffs: &CostCoeffs) -> Vec<Biclique> {
+    let n = graph.num_vertices();
+    if n == 0 {
+        return Vec::new();
+    }
+
+    let subg: Vec<(VertexId, Delta)> = (0..n)
+        .map(|v| (VertexId(v), Delta::initial()))
+        .collect();
+
+    let mut results = Vec::new();
+    let mut state = BronKerboschState::new();
+
+    expand(
+        graph,
+        coeffs,
+        &mut state,
+        &mut Vec::new(),
+        &mut Vec::new(),
+        subg,
+        &mut results,
+    );
+
+    results
+}
+
+fn expand(
+    graph: &ConstrGraph,
+    coeffs: &CostCoeffs,
+    state: &mut BronKerboschState,
+    left_verts: &mut Vec<(VertexId, Rational)>,
+    right_verts: &mut Vec<(VertexId, Rational)>,
+    subg: Vec<(VertexId, Delta)>,
+    results: &mut Vec<Biclique>,
+) {
+    let n_left = left_verts.len();
+    let n_right = right_verts.len();
+
+    // Check maximality: all candidates have negative saving
+    let is_maximal = subg.iter().all(|(_, d)| d.saving < 0);
+    let is_profitable = n_left > 0 && n_right > 0 && (n_left > 1 || n_right > 1);
+
+    if is_maximal && is_profitable {
+        // Compute total exc_cost from edges in the biclique
+        let mut total_exc_cost: i64 = 0;
+        let mut terms_used = 0u64;
+        for &(lv, _) in left_verts.iter() {
+            for &(rv, _) in right_verts.iter() {
+                let edges = graph.edges_between(lv, rv);
+                for edge in &edges {
+                    let et = 1u64 << edge.term_idx;
+                    if terms_used & et == 0 {
+                        total_exc_cost += edge.exc_cost as i64;
+                        terms_used |= et;
+                        break;
+                    }
+                }
+            }
+        }
+
+        let saving = (n_left * n_right) as i64 * coeffs.final_cost as i64
+            - coeffs.final_cost as i64
+            - (n_left.saturating_sub(1)) as i64 * coeffs.prep_left as i64
+            - (n_right.saturating_sub(1)) as i64 * coeffs.prep_right as i64
+            - total_exc_cost;
+
+        if saving >= 0 {
+            results.push(Biclique {
+                left_verts: left_verts.clone(),
+                right_verts: right_verts.clone(),
+                leading_coeff: state.leading_coeff.clone(),
+                terms_used,
+                saving,
+            });
+        }
+    }
+
+    // Collect candidates with non-negative saving
+    let candidates: Vec<(VertexId, Delta)> = subg
+        .iter()
+        .filter(|(_, d)| d.saving >= 0)
+        .cloned()
+        .collect();
+
+    for (q_v, q_d) in &candidates {
+        let q_v = *q_v;
+        let q_side = graph.vertex_side[q_v.0];
+
+        // Compute updated subgraph
+        let mut new_subg = Vec::new();
+        for &(s_v, ref s_d) in &subg {
+            if s_v == q_v {
+                continue;
+            }
+            match update_delta(graph, coeffs, state, q_v, q_d, s_v, s_d) {
+                Some(mut updated) => {
+                    let mut nl = state.n_left;
+                    let mut nr = state.n_right;
+                    match q_side {
+                        Side::Left => nl += 1,
+                        Side::Right => nr += 1,
+                    }
+                    let (gl, gr) = gross_saving(coeffs, nl, nr);
+                    let gross = match graph.vertex_side[s_v.0] {
+                        Side::Left => gl,
+                        Side::Right => gr,
+                    };
+                    updated.saving = gross - updated.exc_cost;
+                    new_subg.push((s_v, updated));
+                }
+                None => {
+                    let mut excluded = s_d.clone();
+                    excluded.saving = -1;
+                    new_subg.push((s_v, excluded));
+                }
+            }
+        }
+
+        // Save state
+        let prev_leading = state.leading_coeff.clone();
+        let prev_terms = state.terms_used;
+        let prev_n_left = state.n_left;
+        let prev_n_right = state.n_right;
+
+        // Add vertex
+        match q_side {
+            Side::Left => {
+                left_verts.push((q_v, q_d.coeff.clone()));
+                state.n_left += 1;
+            }
+            Side::Right => {
+                right_verts.push((q_v, q_d.coeff.clone()));
+                state.n_right += 1;
+            }
+        }
+        if let Some(ref lc) = q_d.leading_coeff {
+            state.leading_coeff = Some(lc.clone());
+        }
+        state.terms_used |= q_d.terms;
+
+        expand(graph, coeffs, state, left_verts, right_verts, new_subg, results);
+
+        // Backtrack
+        match q_side {
+            Side::Left => {
+                left_verts.pop();
+            }
+            Side::Right => {
+                right_verts.pop();
+            }
+        }
+        state.leading_coeff = prev_leading;
+        state.terms_used = prev_terms;
+        state.n_left = prev_n_left;
+        state.n_right = prev_n_right;
+    }
+}
+
 /// Update a delta for `curr_v` when considering adding `new_v` to the biclique.
 ///
 /// Returns `None` if adding `new_v` is incompatible with `curr_v`.

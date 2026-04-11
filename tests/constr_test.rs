@@ -1,8 +1,8 @@
 use num::rational::Ratio;
 
 use rustymill::constr::{
-    build_constr_graphs, compute_cost_coeffs, gross_saving, update_delta, BronKerboschState, Delta,
-    Side,
+    build_constr_graphs, compute_cost_coeffs, find_bicliques, gross_saving, update_delta,
+    BronKerboschState, Delta, Side,
 };
 use rustymill::parenth::{parenthesize, ParenthResult};
 use rustymill::repr::*;
@@ -277,4 +277,106 @@ fn test_delta_same_part_no_constraint() {
         let result = update_delta(graph, &coeffs, &bk, v0, &d0, v1, &d1);
         assert!(result.is_some());
     }
+}
+
+// ---------------------------------------------------------------------------
+// Full biclique helper
+// ---------------------------------------------------------------------------
+
+/// Build: t[a,b] = X[a,c]*P[c,b] + Y[a,c]*P[c,b] + X[a,c]*Q[c,b] + Y[a,c]*Q[c,b]
+/// Full biclique: {X, Y} x {P, Q}
+fn make_full_biclique_def() -> (TensorComputation, TensorDef, Vec<ParenthResult>) {
+    let mut comp = TensorComputation::new();
+    let occ = comp.add_range(10);
+    let _t = comp.add_tensor(&[occ, occ], vec![]); // 0
+    let _x = comp.add_tensor(&[occ, occ], vec![]); // 1
+    let _y = comp.add_tensor(&[occ, occ], vec![]); // 2
+    let _p = comp.add_tensor(&[occ, occ], vec![]); // 3
+    let _q = comp.add_tensor(&[occ, occ], vec![]); // 4
+
+    let a = IndexId(0);
+    let b = IndexId(1);
+    let c = IndexId(2);
+
+    let ext_indices = vec![
+        Index { id: a, range: occ },
+        Index { id: b, range: occ },
+    ];
+
+    let make_term = |left_id: u32, right_id: u32| -> Term {
+        Term {
+            coeff: Ratio::from_integer(1),
+            sum_indices: vec![Index { id: c, range: occ }],
+            factors: vec![
+                Factor {
+                    tensor: TensorId(left_id),
+                    indices: vec![a, c],
+                },
+                Factor {
+                    tensor: TensorId(right_id),
+                    indices: vec![c, b],
+                },
+            ],
+        }
+    };
+
+    let terms = vec![
+        make_term(1, 3), // X*P
+        make_term(2, 3), // Y*P
+        make_term(1, 4), // X*Q
+        make_term(2, 4), // Y*Q
+    ];
+
+    let def = TensorDef {
+        base: TensorId(0),
+        ext_indices: ext_indices.clone(),
+        terms: terms.clone(),
+    };
+
+    let prs: Vec<ParenthResult> = terms
+        .iter()
+        .map(|t| parenthesize(t, &ext_indices, comp.ranges()))
+        .collect();
+
+    (comp, def, prs)
+}
+
+// ---------------------------------------------------------------------------
+// Biclique tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_find_bicliques_shared_factor() {
+    let (comp, def, prs) = make_shared_factor_def();
+    let graphs = build_constr_graphs(&def, &comp, &prs);
+    let graph = &graphs[0];
+    let coeffs = compute_cost_coeffs(&graph.last_step, &prs[0].info);
+
+    let bicliques = find_bicliques(graph, &coeffs);
+    assert!(!bicliques.is_empty());
+
+    // Should find biclique with 2 left (X,Y) and 1 right (Z)
+    let bc = bicliques.iter().find(|bc| {
+        (bc.left_verts.len() == 2 && bc.right_verts.len() == 1)
+            || (bc.left_verts.len() == 1 && bc.right_verts.len() == 2)
+    });
+    assert!(bc.is_some(), "Should find {{X,Y}}x{{Z}} biclique");
+    assert!(bc.unwrap().saving >= 0);
+}
+
+#[test]
+fn test_find_bicliques_full_2x2() {
+    let (comp, def, prs) = make_full_biclique_def();
+    let graphs = build_constr_graphs(&def, &comp, &prs);
+    let graph = &graphs[0];
+    let coeffs = compute_cost_coeffs(&graph.last_step, &prs[0].info);
+
+    let bicliques = find_bicliques(graph, &coeffs);
+
+    let full_bc = bicliques
+        .iter()
+        .find(|bc| bc.left_verts.len() == 2 && bc.right_verts.len() == 2);
+    assert!(full_bc.is_some(), "Should find a 2x2 biclique");
+    assert_eq!(full_bc.unwrap().terms_used.count_ones(), 4);
+    assert!(full_bc.unwrap().saving > 0);
 }
