@@ -172,3 +172,88 @@ fn test_split_cost_partial_contraction() {
     assert_eq!(cost.step_cost, 2_010_000);
     assert_eq!(cost.contracted_sums, 0b10);
 }
+
+#[test]
+fn test_parenthesize_two_factors() {
+    let mut comp = TensorComputation::new();
+    let occ = comp.add_range(10);
+    let _a = comp.add_tensor(&[occ, occ], vec![]);
+    let _b = comp.add_tensor(&[occ, occ], vec![]);
+
+    let a = IndexId(0);
+    let b = IndexId(1);
+    let c = IndexId(2);
+
+    let ext = vec![
+        Index { id: a, range: occ },
+        Index { id: b, range: occ },
+    ];
+    let term = Term {
+        coeff: Ratio::from_integer(1),
+        sum_indices: vec![Index { id: c, range: occ }],
+        factors: vec![
+            Factor { tensor: TensorId(0), indices: vec![a, c] },
+            Factor { tensor: TensorId(1), indices: vec![c, b] },
+        ],
+    };
+
+    let result = parenthesize(&term, &ext, comp.ranges());
+
+    let full = &result.memoir[&0b11u64];
+    assert_eq!(full.evals.len(), 1);
+    assert_eq!(full.best_cost, 2100);
+    assert_eq!(full.evals[0].left, 0b01);
+    assert_eq!(full.evals[0].right, 0b10);
+
+    assert_eq!(result.memoir[&0b01u64].best_cost, 0);
+    assert_eq!(result.memoir[&0b10u64].best_cost, 0);
+}
+
+#[test]
+fn test_parenthesize_three_factors() {
+    let (comp, term, ext_indices) = make_abc_term();
+    let result = parenthesize(&term, &ext_indices, comp.ranges());
+
+    let full = &result.memoir[&0b111u64];
+    assert_eq!(full.evals.len(), 3);
+
+    let min_cost = full.evals.iter().map(|e| e.cost).min().unwrap();
+    assert_eq!(full.best_cost, min_cost);
+
+    assert!(result.memoir.contains_key(&0b011u64));
+    assert!(result.memoir.contains_key(&0b101u64));
+    assert!(result.memoir.contains_key(&0b110u64));
+}
+
+#[test]
+fn test_parenthesize_optimal_order() {
+    let (comp, term, ext_indices) = make_abc_term();
+    let result = parenthesize(&term, &ext_indices, comp.ranges());
+
+    let full = &result.memoir[&0b111u64];
+    assert_eq!(full.best_cost, 222_000);
+
+    let worst = full.evals.iter().find(|e| {
+        (e.left == 0b010 && e.right == 0b101) || (e.left == 0b101 && e.right == 0b010)
+    }).unwrap();
+    assert_eq!(worst.cost, 4_001_000);
+}
+
+#[test]
+fn test_parenthesize_single_factor() {
+    let mut comp = TensorComputation::new();
+    let occ = comp.add_range(10);
+    let _a = comp.add_tensor(&[occ], vec![]);
+    let a = IndexId(0);
+    let ext = vec![Index { id: a, range: occ }];
+    let term = Term {
+        coeff: Ratio::from_integer(1),
+        sum_indices: vec![],
+        factors: vec![Factor { tensor: TensorId(0), indices: vec![a] }],
+    };
+
+    let result = parenthesize(&term, &ext, comp.ranges());
+    assert_eq!(result.memoir.len(), 1);
+    assert_eq!(result.memoir[&0b1u64].best_cost, 0);
+    assert!(result.memoir[&0b1u64].evals.is_empty());
+}
