@@ -307,3 +307,69 @@ fn test_extract_optimal_three_factors() {
 
     assert_eq!(defs.last().unwrap().ext_indices.len(), 2);
 }
+
+#[test]
+fn test_parenthesize_stores_all_alternatives() {
+    let (comp, term, ext_indices) = make_abc_term();
+    let result = parenthesize(&term, &ext_indices, comp.ranges());
+
+    let full = &result.memoir[&0b111u64];
+    assert_eq!(full.evals.len(), 3);
+
+    let mut splits: Vec<(u64, u64)> = full.evals.iter()
+        .map(|e| (e.left.min(e.right), e.left.max(e.right)))
+        .collect();
+    splits.sort();
+
+    assert_eq!(splits, vec![
+        (0b001, 0b110),
+        (0b010, 0b101),
+        (0b011, 0b100),
+    ]);
+
+    assert_eq!(result.memoir[&0b110u64].evals.len(), 1);
+}
+
+#[test]
+fn test_parenthesize_four_factors() {
+    let mut comp = TensorComputation::new();
+    let occ = comp.add_range(10);
+    let virt = comp.add_range(100);
+    let _a = comp.add_tensor(&[occ, occ], vec![]);
+    let _b = comp.add_tensor(&[occ, virt], vec![]);
+    let _c = comp.add_tensor(&[virt, virt], vec![]);
+    let _d = comp.add_tensor(&[virt, occ], vec![]);
+
+    let a = IndexId(0);
+    let b = IndexId(1);
+    let c = IndexId(2);
+    let d = IndexId(3);
+    let e = IndexId(4);
+
+    let ext = vec![
+        Index { id: a, range: occ },
+        Index { id: b, range: occ },
+    ];
+    let term = Term {
+        coeff: Ratio::from_integer(1),
+        sum_indices: vec![
+            Index { id: c, range: occ },
+            Index { id: d, range: virt },
+            Index { id: e, range: virt },
+        ],
+        factors: vec![
+            Factor { tensor: TensorId(0), indices: vec![a, c] },
+            Factor { tensor: TensorId(1), indices: vec![c, d] },
+            Factor { tensor: TensorId(2), indices: vec![d, e] },
+            Factor { tensor: TensorId(3), indices: vec![e, b] },
+        ],
+    };
+
+    let result = parenthesize(&term, &ext, comp.ranges());
+
+    let full = &result.memoir[&0b1111u64];
+    assert_eq!(full.evals.len(), 7);
+
+    assert!(full.best_cost > 0);
+    assert!(full.best_cost < u64::MAX);
+}

@@ -7,3 +7,4 @@ pub mod parenth;
 pub use repr::TensorComputation;
 pub use cost::{def_cost, total_cost};
 pub use canon::{canon_term, CanonTerm, CanonFactor, CanonIndex};
+pub use parenth::{parenthesize, extract_optimal, ParenthResult, IndexInfo, Eval, Interm};
