@@ -1,6 +1,9 @@
 use num::rational::Ratio;
 
-use rustymill::constr::{build_constr_graphs, compute_cost_coeffs, gross_saving, Side};
+use rustymill::constr::{
+    build_constr_graphs, compute_cost_coeffs, gross_saving, update_delta, BronKerboschState, Delta,
+    Side,
+};
 use rustymill::parenth::{parenthesize, ParenthResult};
 use rustymill::repr::*;
 
@@ -230,4 +233,48 @@ fn test_gross_saving() {
     // gr = 2 * 2100 - 100 = 4100
     assert_eq!(gl, 2000);
     assert_eq!(gr, 4100);
+}
+
+#[test]
+fn test_delta_different_parts_first_edge() {
+    let (comp, def, prs) = make_shared_factor_def();
+    let graphs = build_constr_graphs(&def, &comp, &prs);
+    let graph = &graphs[0];
+    let coeffs = compute_cost_coeffs(&graph.last_step, &prs[0].info);
+
+    let left_verts = graph.vertices_on_side(Side::Left);
+    let right_verts = graph.vertices_on_side(Side::Right);
+    assert!(!left_verts.is_empty());
+    assert!(!right_verts.is_empty());
+
+    let left_v = left_verts[0];
+    let right_v = right_verts[0];
+    let initial = Delta::initial();
+    let bk = BronKerboschState::new();
+
+    let result = update_delta(graph, &coeffs, &bk, left_v, &initial, right_v, &initial);
+    assert!(result.is_some());
+    let delta = result.unwrap();
+    // First cross-part edge sets leading_coeff
+    assert!(delta.leading_coeff.is_some());
+}
+
+#[test]
+fn test_delta_same_part_no_constraint() {
+    let (comp, def, prs) = make_shared_factor_def();
+    let graphs = build_constr_graphs(&def, &comp, &prs);
+    let graph = &graphs[0];
+    let coeffs = compute_cost_coeffs(&graph.last_step, &prs[0].info);
+
+    let left_verts = graph.vertices_on_side(Side::Left);
+    if left_verts.len() >= 2 {
+        let v0 = left_verts[0];
+        let v1 = left_verts[1];
+        let d0 = Delta::initial();
+        let d1 = Delta::initial();
+        let bk = BronKerboschState::new();
+
+        let result = update_delta(graph, &coeffs, &bk, v0, &d0, v1, &d1);
+        assert!(result.is_some());
+    }
 }

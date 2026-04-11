@@ -263,3 +263,164 @@ pub fn gross_saving(coeffs: &CostCoeffs, n_left: usize, n_right: usize) -> (i64,
     let gr = (n_left as i64) * (coeffs.final_cost as i64) - (coeffs.prep_right as i64);
     (gl, gr)
 }
+
+// ---------------------------------------------------------------------------
+// ConstrGraph helpers
+// ---------------------------------------------------------------------------
+
+impl ConstrGraph {
+    pub fn num_vertices(&self) -> usize {
+        self.vertices.len()
+    }
+
+    pub fn num_edges(&self) -> usize {
+        self.edges.len()
+    }
+
+    pub fn vertices_on_side(&self, side: Side) -> Vec<VertexId> {
+        self.vertex_side
+            .iter()
+            .enumerate()
+            .filter(|(_, &s)| s == side)
+            .map(|(i, _)| VertexId(i))
+            .collect()
+    }
+
+    /// Get all edges between two vertices.
+    pub fn edges_between(&self, u: VertexId, v: VertexId) -> Vec<&EdgeInfo> {
+        self.edges
+            .iter()
+            .filter(|(a, b, _)| (*a == u && *b == v) || (*a == v && *b == u))
+            .map(|(_, _, info)| info)
+            .collect()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Delta computation for Bron-Kerbosch biclique search
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Debug)]
+pub struct Delta {
+    pub coeff: Rational,
+    pub leading_coeff: Option<Rational>,
+    pub terms: u64,
+    pub exc_cost: i64,
+    pub saving: i64,
+}
+
+impl Delta {
+    pub fn initial() -> Self {
+        Delta {
+            coeff: Ratio::from_integer(1),
+            leading_coeff: None,
+            terms: 0,
+            exc_cost: 0,
+            saving: 0,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct BronKerboschState {
+    pub leading_coeff: Option<Rational>,
+    pub terms_used: u64,
+    pub n_left: usize,
+    pub n_right: usize,
+}
+
+impl BronKerboschState {
+    pub fn new() -> Self {
+        BronKerboschState {
+            leading_coeff: None,
+            terms_used: 0,
+            n_left: 0,
+            n_right: 0,
+        }
+    }
+}
+
+/// Update a delta for `curr_v` when considering adding `new_v` to the biclique.
+///
+/// Returns `None` if adding `new_v` is incompatible with `curr_v`.
+pub fn update_delta(
+    graph: &ConstrGraph,
+    _coeffs: &CostCoeffs,
+    bk_state: &BronKerboschState,
+    new_v: VertexId,
+    new_d: &Delta,
+    curr_v: VertexId,
+    curr_d: &Delta,
+) -> Option<Delta> {
+    let new_side = graph.vertex_side[new_v.0];
+    let curr_side = graph.vertex_side[curr_v.0];
+
+    let mut updated = Delta {
+        coeff: curr_d.coeff.clone(),
+        leading_coeff: curr_d.leading_coeff.clone(),
+        terms: curr_d.terms,
+        exc_cost: curr_d.exc_cost,
+        saving: 0, // computed later by caller
+    };
+
+    if new_side == curr_side {
+        // Same part
+        if new_d.leading_coeff.is_some() && curr_d.leading_coeff.is_some() {
+            let new_lc = new_d.leading_coeff.as_ref().unwrap();
+            let curr_lc = curr_d.leading_coeff.as_ref().unwrap();
+            if *new_lc == Ratio::from_integer(0) {
+                return None;
+            }
+            updated.coeff = curr_lc / new_lc;
+            updated.leading_coeff = None;
+        }
+    } else {
+        // Different parts: must have edge
+        let edges = graph.edges_between(new_v, curr_v);
+        if edges.is_empty() {
+            return None;
+        }
+
+        // Pick best compatible edge (lowest exc_cost, no term conflict)
+        let mut best_edge: Option<&EdgeInfo> = None;
+        for edge in &edges {
+            let edge_term = 1u64 << edge.term_idx;
+            let conflict = (edge_term & new_d.terms != 0)
+                || (edge_term & curr_d.terms != 0)
+                || (edge_term & bk_state.terms_used != 0);
+            if conflict {
+                continue;
+            }
+            match best_edge {
+                None => best_edge = Some(edge),
+                Some(prev) if edge.exc_cost < prev.exc_cost => best_edge = Some(edge),
+                _ => {}
+            }
+        }
+
+        let edge = best_edge?;
+
+        let edge_term = 1u64 << edge.term_idx;
+        updated.terms |= edge_term;
+        updated.exc_cost += edge.exc_cost as i64;
+
+        let edge_coeff = &edge.coeff;
+
+        if let Some(ref new_lc) = new_d.leading_coeff {
+            if *new_lc == Ratio::from_integer(0) {
+                return None;
+            }
+            updated.coeff = edge_coeff / new_lc;
+        } else if bk_state.leading_coeff.is_none() {
+            updated.leading_coeff = Some(edge_coeff.clone());
+        } else {
+            let lc = bk_state.leading_coeff.as_ref().unwrap();
+            let expected = lc * &new_d.coeff * &curr_d.coeff;
+            if *edge_coeff != expected {
+                return None;
+            }
+        }
+    }
+
+    Some(updated)
+}
