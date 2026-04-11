@@ -627,6 +627,8 @@ pub fn factorizations(
     let mut results = Vec::new();
     let mut next_id = next_tensor_id.0;
 
+    let mut seen_vertex_sets: HashSet<(Vec<VertexId>, Vec<VertexId>)> = HashSet::new();
+
     for graph in &graphs {
         if graph.edges.is_empty() {
             continue;
@@ -650,6 +652,16 @@ pub fn factorizations(
                     .all(|(rv, _)| !graph.edges_between(*lv, *rv).is_empty())
             });
             if !is_complete {
+                continue;
+            }
+
+            // Deduplicate: same vertex sets produce the same factorization
+            // regardless of coefficient decomposition.
+            let mut left_ids: Vec<VertexId> = bc.left_verts.iter().map(|(v, _)| *v).collect();
+            let mut right_ids: Vec<VertexId> = bc.right_verts.iter().map(|(v, _)| *v).collect();
+            left_ids.sort();
+            right_ids.sort();
+            if !seen_vertex_sets.insert((left_ids, right_ids)) {
                 continue;
             }
 
