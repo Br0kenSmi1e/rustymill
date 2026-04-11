@@ -482,3 +482,23 @@ fn test_factorizations_no_sharing() {
     let profitable: Vec<_> = facts.iter().filter(|f| f.saving > 0).collect();
     assert!(profitable.is_empty());
 }
+
+#[test]
+fn test_factorizations_with_mixed_terms() {
+    // t[a,b] = X[a,c]*Z[c,b] + Y[a,c]*Z[c,b] + W[a,b]
+    // Should factor terms 0,1 leaving term 2 untouched
+    let (comp, def, prs) = make_mixed_terms_def();
+    let next_id = TensorId(comp.tensors().len() as u32);
+
+    let facts = factorizations(&def, &prs, &comp, next_id);
+
+    let best = facts.iter().max_by_key(|f| f.saving);
+    assert!(best.is_some());
+
+    let f = best.unwrap();
+    // Should only consume terms 0 and 1 (not term 2 which is W[a,b])
+    assert_eq!(f.terms_consumed.len(), 2);
+    assert!(f.terms_consumed.contains(&0));
+    assert!(f.terms_consumed.contains(&1));
+    assert!(!f.terms_consumed.contains(&2));
+}
