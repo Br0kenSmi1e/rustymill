@@ -246,6 +246,14 @@ impl TensorComputation {
     pub fn definitions(&self) -> &[TensorDef] {
         &self.definitions
     }
+
+    pub fn definitions_mut(&mut self) -> &mut Vec<TensorDef> {
+        &mut self.definitions
+    }
+
+    pub fn next_tensor_id(&self) -> TensorId {
+        TensorId(self.tensors.len() as u32)
+    }
 }
 
 impl fmt::Display for TensorComputation {
