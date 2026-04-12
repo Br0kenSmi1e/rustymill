@@ -1,5 +1,6 @@
 use num::rational::Ratio;
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
 // ---------------------------------------------------------------------------
 // ID newtypes
@@ -97,6 +98,20 @@ pub struct Factor {
     pub indices: Vec<IndexId>,
 }
 
+impl fmt::Display for Factor {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.tensor.0)?;
+        write!(f, "[")?;
+        for (i, ix) in self.indices.iter().enumerate() {
+            if i > 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "{}", ix.0)?;
+        }
+        write!(f, "]")
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Term {
     pub coeff: Rational,
@@ -104,11 +119,71 @@ pub struct Term {
     pub factors: Vec<Factor>,
 }
 
+impl fmt::Display for Term {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let one = Rational::new(1, 1);
+        if !self.sum_indices.is_empty() {
+            write!(f, "Σ[")?;
+            for (i, ix) in self.sum_indices.iter().enumerate() {
+                if i > 0 {
+                    write!(f, ", ")?;
+                }
+                write!(f, "{}", ix.id.0)?;
+            }
+            write!(f, "] ")?;
+        }
+        if self.coeff != one {
+            write!(f, "{}", self.coeff)?;
+            if !self.factors.is_empty() {
+                write!(f, " * ")?;
+            }
+        }
+        if self.factors.is_empty() {
+            if self.coeff == one && self.sum_indices.is_empty() {
+                write!(f, "1")?;
+            }
+        } else {
+            for (i, fac) in self.factors.iter().enumerate() {
+                if i > 0 {
+                    write!(f, " * ")?;
+                }
+                write!(f, "{fac}")?;
+            }
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TensorDef {
     pub base: TensorId,
     pub ext_indices: Vec<Index>,
     pub terms: Vec<Term>,
+}
+
+impl fmt::Display for TensorDef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.base.0)?;
+        write!(f, "[")?;
+        for (i, ix) in self.ext_indices.iter().enumerate() {
+            if i > 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "{}", ix.id.0)?;
+        }
+        write!(f, "] = ")?;
+        if self.terms.is_empty() {
+            write!(f, "0")?;
+        } else {
+            for (i, t) in self.terms.iter().enumerate() {
+                if i > 0 {
+                    write!(f, " + ")?;
+                }
+                write!(f, "{t}")?;
+            }
+        }
+        Ok(())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -170,6 +245,20 @@ impl TensorComputation {
 
     pub fn definitions(&self) -> &[TensorDef] {
         &self.definitions
+    }
+}
+
+impl fmt::Display for TensorComputation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut first = true;
+        for def in &self.definitions {
+            if !first {
+                write!(f, "\n")?;
+            }
+            first = false;
+            write!(f, "{def}")?;
+        }
+        Ok(())
     }
 }
 
