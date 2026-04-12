@@ -4,6 +4,7 @@ pub mod canon;
 pub mod parenth;
 pub mod constr;
 pub mod optimize;
+pub mod convert;
 
 // Re-export primary types at crate root for convenience.
 pub use repr::TensorComputation;
@@ -12,3 +13,4 @@ pub use canon::{canon_term, CanonTerm, CanonFactor, CanonIndex};
 pub use parenth::{parenthesize, extract_optimal, ParenthResult, IndexInfo, Eval, Interm};
 pub use constr::{factorizations, Factorization};
 pub use optimize::{greedy_optimize, apply_factorization};
+pub use convert::{read_json, write_json, from_json, to_json};
