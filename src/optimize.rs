@@ -1,6 +1,6 @@
 use crate::constr::{factorizations, Factorization};
 use crate::parenth::parenthesize;
-use crate::repr::{TensorComputation, TensorDef, TensorId};
+use crate::repr::{TensorComputation, TensorDef};
 
 /// Apply a factorization to a TensorComputation.
 ///
@@ -39,52 +39,45 @@ pub fn apply_factorization(
     }
 }
 
+/// Find the leftmost TensorDef (starting from `start_from`) that has a
+/// profitable factorization, and return its index along with the best one.
+fn next_decision(
+    comp: &TensorComputation,
+    start_from: usize,
+) -> Option<(usize, Factorization)> {
+    for (i, def) in comp.definitions().iter().enumerate().skip(start_from) {
+        if def.terms.len() < 2 {
+            continue;
+        }
+
+        let prs: Vec<_> = def
+            .terms
+            .iter()
+            .map(|t| parenthesize(t, &def.ext_indices, comp.ranges()))
+            .collect();
+
+        let next_id = comp.next_tensor_id();
+        let facts = factorizations(def, &prs, comp, next_id);
+
+        if let Some(best) = facts.into_iter().filter(|f| f.saving > 0).max_by_key(|f| f.saving) {
+            return Some((i, best));
+        }
+    }
+    None
+}
+
 /// Greedy optimization: repeatedly find and apply the best factorization
-/// until no more profitable factorizations exist.
+/// for the leftmost TensorDef with profitable bicliques, until none remain.
 ///
 /// Returns the number of factorizations applied.
 pub fn greedy_optimize(comp: &mut TensorComputation) -> usize {
     let mut count = 0;
+    let mut start_from = 0;
 
-    loop {
-        let mut best_fact: Option<Factorization> = None;
-        let mut best_def_idx: usize = 0;
-        let mut best_saving: i64 = 0;
-
-        // Search all definitions for the best factorization
-        for (def_idx, def) in comp.definitions().iter().enumerate() {
-            // Skip definitions with < 2 multi-factor terms
-            // (need at least 2 terms to find a biclique)
-            if def.terms.len() < 2 {
-                continue;
-            }
-
-            // Parenthesize each term
-            let prs: Vec<_> = def
-                .terms
-                .iter()
-                .map(|t| parenthesize(t, &def.ext_indices, comp.ranges()))
-                .collect();
-
-            let next_id = comp.next_tensor_id();
-            let facts = factorizations(def, &prs, comp, next_id);
-
-            if let Some(f) = facts.into_iter().max_by_key(|f| f.saving) {
-                if f.saving > best_saving {
-                    best_saving = f.saving;
-                    best_fact = Some(f);
-                    best_def_idx = def_idx;
-                }
-            }
-        }
-
-        match best_fact {
-            Some(fact) if best_saving > 0 => {
-                apply_factorization(comp, best_def_idx, &fact);
-                count += 1;
-            }
-            _ => break,
-        }
+    while let Some((def_idx, best)) = next_decision(comp, start_from) {
+        apply_factorization(comp, def_idx, &best);
+        count += 1;
+        start_from = def_idx;
     }
 
     count
