@@ -204,7 +204,7 @@ fn test_cost_coeffs() {
     let graphs = build_constr_graphs(&def, &comp, &prs);
     let graph = &graphs[0];
 
-    let coeffs = compute_cost_coeffs(&graph.last_step, &prs[0].info);
+    let coeffs = compute_cost_coeffs(&graph.last_step, &prs[0].info, comp.ranges());
     // All occ=10. left_ext={a}=10, right_ext={b}=10, sums={c}=10
     // ext_size = 10*10 = 100, sum_size = 10
     // final_cost = 2*100*10 + 100 = 2100
@@ -220,7 +220,7 @@ fn test_gross_saving() {
     let (comp, def, prs) = make_shared_factor_def();
     let graphs = build_constr_graphs(&def, &comp, &prs);
     let graph = &graphs[0];
-    let coeffs = compute_cost_coeffs(&graph.last_step, &prs[0].info);
+    let coeffs = compute_cost_coeffs(&graph.last_step, &prs[0].info, comp.ranges());
 
     let (gl, gr) = gross_saving(&coeffs, 1, 1);
     // gl = 1 * 2100 - 100 = 2000
@@ -240,7 +240,7 @@ fn test_delta_different_parts_first_edge() {
     let (comp, def, prs) = make_shared_factor_def();
     let graphs = build_constr_graphs(&def, &comp, &prs);
     let graph = &graphs[0];
-    let coeffs = compute_cost_coeffs(&graph.last_step, &prs[0].info);
+    let coeffs = compute_cost_coeffs(&graph.last_step, &prs[0].info, comp.ranges());
 
     let left_verts = graph.vertices_on_side(Side::Left);
     let right_verts = graph.vertices_on_side(Side::Right);
@@ -264,7 +264,7 @@ fn test_delta_same_part_no_constraint() {
     let (comp, def, prs) = make_shared_factor_def();
     let graphs = build_constr_graphs(&def, &comp, &prs);
     let graph = &graphs[0];
-    let coeffs = compute_cost_coeffs(&graph.last_step, &prs[0].info);
+    let coeffs = compute_cost_coeffs(&graph.last_step, &prs[0].info, comp.ranges());
 
     let left_verts = graph.vertices_on_side(Side::Left);
     if left_verts.len() >= 2 {
@@ -350,7 +350,7 @@ fn test_find_bicliques_shared_factor() {
     let (comp, def, prs) = make_shared_factor_def();
     let graphs = build_constr_graphs(&def, &comp, &prs);
     let graph = &graphs[0];
-    let coeffs = compute_cost_coeffs(&graph.last_step, &prs[0].info);
+    let coeffs = compute_cost_coeffs(&graph.last_step, &prs[0].info, comp.ranges());
 
     let bicliques = find_bicliques(graph, &coeffs);
     assert!(!bicliques.is_empty());
@@ -369,7 +369,7 @@ fn test_find_bicliques_full_2x2() {
     let (comp, def, prs) = make_full_biclique_def();
     let graphs = build_constr_graphs(&def, &comp, &prs);
     let graph = &graphs[0];
-    let coeffs = compute_cost_coeffs(&graph.last_step, &prs[0].info);
+    let coeffs = compute_cost_coeffs(&graph.last_step, &prs[0].info, comp.ranges());
 
     let bicliques = find_bicliques(graph, &coeffs);
 

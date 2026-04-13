@@ -5,7 +5,7 @@ use num::rational::Ratio;
 
 use crate::canon::{canon_term, CanonTerm};
 use crate::parenth::{FactorSubset, ParenthResult};
-use crate::repr::{Factor, Index, IndexId, Rational, TensorComputation, TensorDef, TensorId, Term};
+use crate::repr::{Factor, Index, IndexId, Range, RangeId, Rational, TensorComputation, TensorDef, TensorId, Term};
 
 // ---------------------------------------------------------------------------
 // Data structures
@@ -20,11 +20,16 @@ pub enum Side {
     Right,
 }
 
+/// Grouping key for constriction graphs.
+///
+/// `left_ext` and `right_ext` are bitmasks of the definition's ext_indices
+/// (globally consistent across terms).  `sums` is a sorted Vec of RangeIds
+/// for the contracted sum indices (range-based, not term-local bitmask).
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct LastStepIndices {
     pub left_ext: u64,
     pub right_ext: u64,
-    pub sums: u64,
+    pub sums: Vec<RangeId>,
 }
 
 #[derive(Clone, Debug)]
@@ -91,15 +96,13 @@ pub fn make_sub_term(term: &Term, subset: FactorSubset) -> Term {
 /// For each term with 2+ factors, every binary split (eval) of the full factor
 /// set produces an edge in a bipartite graph.  The left and right sides of the
 /// split are canonicalized to produce vertices.  Splits with the same
-/// `LastStepIndices` (the external-index bitmasks of the two sides) are grouped
-/// into a single `ConstrGraph`.
+/// `LastStepIndices` are grouped into a single `ConstrGraph`.
 pub fn build_constr_graphs(
     def: &TensorDef,
     comp: &TensorComputation,
     parenth_results: &[ParenthResult],
 ) -> Vec<ConstrGraph> {
     // Accumulate edges grouped by LastStepIndices.
-    // Each entry: (left_canon, right_canon, edge_info)
     let mut groups: HashMap<LastStepIndices, Vec<(CanonTerm, CanonTerm, EdgeInfo)>> =
         HashMap::new();
 
@@ -110,7 +113,7 @@ pub fn build_constr_graphs(
 
         let n = pr.info.n_factors;
         let full_mask: FactorSubset = (1u64 << n) - 1;
-        let interm = &pr.memoir[&full_mask];
+        let interm = &pr.memoir[&(full_mask, 0)];
 
         for (eval_idx, eval) in interm.evals.iter().enumerate() {
             let mut left_ext = pr.info.ext_bits(eval.left);
@@ -124,10 +127,20 @@ pub fn build_constr_graphs(
                 std::mem::swap(&mut left_subset, &mut right_subset);
             }
 
+            // Convert contracted_sums bitmask to sorted Vec<RangeId>.
+            let mut sum_ranges: Vec<RangeId> = Vec::new();
+            let mut m = eval.contracted_sums;
+            while m != 0 {
+                let bit = m.trailing_zeros() as usize;
+                sum_ranges.push(term.sum_indices[bit].range);
+                m &= m - 1;
+            }
+            sum_ranges.sort();
+
             let lsi = LastStepIndices {
                 left_ext,
                 right_ext,
-                sums: eval.contracted_sums,
+                sums: sum_ranges,
             };
 
             let left_sub = make_sub_term(term, left_subset);
@@ -192,6 +205,7 @@ pub fn build_constr_graphs(
             .left_ext
             .cmp(&b.last_step.left_ext)
             .then(a.last_step.right_ext.cmp(&b.last_step.right_ext))
+            .then(a.last_step.sums.cmp(&b.last_step.sums))
     });
 
     result
@@ -226,14 +240,17 @@ pub struct CostCoeffs {
 }
 
 /// Compute cost coefficients for a given index pattern.
-/// Uses the parenth IndexInfo to look up index sizes.
 pub fn compute_cost_coeffs(
     last_step: &LastStepIndices,
     info: &crate::parenth::IndexInfo,
+    ranges: &[Range],
 ) -> CostCoeffs {
     let left_ext_size = info.size_product_ext(last_step.left_ext).max(1);
     let right_ext_size = info.size_product_ext(last_step.right_ext).max(1);
-    let sum_size = info.size_product_sum(last_step.sums).max(1);
+    let sum_size: u64 = last_step.sums.iter()
+        .map(|r| ranges[r.0 as usize].size)
+        .product::<u64>()
+        .max(1);
     let ext_size = left_ext_size * right_ext_size;
 
     let contraction = if sum_size == 1 {
@@ -391,12 +408,10 @@ fn expand(
     let n_left = left_verts.len();
     let n_right = right_verts.len();
 
-    // Check maximality: all candidates have negative saving
     let is_maximal = subg.iter().all(|(_, d)| d.saving < 0);
     let is_profitable = n_left > 0 && n_right > 0 && (n_left > 1 || n_right > 1);
 
     if is_maximal && is_profitable {
-        // Compute total exc_cost from edges in the biclique
         let mut total_exc_cost: i64 = 0;
         let mut terms_used = 0u64;
         for &(lv, _) in left_verts.iter() {
@@ -430,7 +445,6 @@ fn expand(
         }
     }
 
-    // Collect candidates with non-negative saving
     let candidates: Vec<(VertexId, Delta)> = subg
         .iter()
         .filter(|(_, d)| d.saving >= 0)
@@ -441,7 +455,6 @@ fn expand(
         let q_v = *q_v;
         let q_side = graph.vertex_side[q_v.0];
 
-        // Compute updated subgraph
         let mut new_subg = Vec::new();
         for &(s_v, ref s_d) in &subg {
             if s_v == q_v {
@@ -471,13 +484,11 @@ fn expand(
             }
         }
 
-        // Save state
         let prev_leading = state.leading_coeff.clone();
         let prev_terms = state.terms_used;
         let prev_n_left = state.n_left;
         let prev_n_right = state.n_right;
 
-        // Add vertex
         match q_side {
             Side::Left => {
                 left_verts.push((q_v, q_d.coeff.clone()));
@@ -495,14 +506,9 @@ fn expand(
 
         expand(graph, coeffs, state, left_verts, right_verts, new_subg, results);
 
-        // Backtrack
         match q_side {
-            Side::Left => {
-                left_verts.pop();
-            }
-            Side::Right => {
-                right_verts.pop();
-            }
+            Side::Left => { left_verts.pop(); }
+            Side::Right => { right_verts.pop(); }
         }
         state.leading_coeff = prev_leading;
         state.terms_used = prev_terms;
@@ -512,8 +518,6 @@ fn expand(
 }
 
 /// Update a delta for `curr_v` when considering adding `new_v` to the biclique.
-///
-/// Returns `None` if adding `new_v` is incompatible with `curr_v`.
 pub fn update_delta(
     graph: &ConstrGraph,
     _coeffs: &CostCoeffs,
@@ -531,11 +535,10 @@ pub fn update_delta(
         leading_coeff: curr_d.leading_coeff.clone(),
         terms: curr_d.terms,
         exc_cost: curr_d.exc_cost,
-        saving: 0, // computed later by caller
+        saving: 0,
     };
 
     if new_side == curr_side {
-        // Same part
         if new_d.leading_coeff.is_some() && curr_d.leading_coeff.is_some() {
             let new_lc = new_d.leading_coeff.as_ref().unwrap();
             let curr_lc = curr_d.leading_coeff.as_ref().unwrap();
@@ -546,13 +549,11 @@ pub fn update_delta(
             updated.leading_coeff = None;
         }
     } else {
-        // Different parts: must have edge
         let edges = graph.edges_between(new_v, curr_v);
         if edges.is_empty() {
             return None;
         }
 
-        // Pick best compatible edge (lowest exc_cost, no term conflict)
         let mut best_edge: Option<&EdgeInfo> = None;
         for edge in &edges {
             let edge_term = 1u64 << edge.term_idx;
@@ -602,21 +603,13 @@ pub fn update_delta(
 
 #[derive(Clone, Debug)]
 pub struct Factorization {
-    /// Which terms in the original TensorDef are consumed.
     pub terms_consumed: Vec<usize>,
-    /// New intermediate TensorDefs (0-2: left sum, right sum).
     pub intermediates: Vec<TensorDef>,
-    /// The term that replaces the consumed terms.
     pub replacement_term: Term,
-    /// Cost saving (positive = beneficial).
     pub saving: i64,
 }
 
 /// Convert bicliques into concrete `Factorization` records.
-///
-/// Builds constriction graphs, finds bicliques, and converts each profitable
-/// biclique into a `Factorization` with intermediate TensorDefs and a
-/// replacement term.
 pub fn factorizations(
     def: &TensorDef,
     parenth_results: &[ParenthResult],
@@ -636,7 +629,7 @@ pub fn factorizations(
 
         let first_term_idx = graph.edges[0].2.term_idx;
         let info = &parenth_results[first_term_idx].info;
-        let coeffs = compute_cost_coeffs(&graph.last_step, info);
+        let coeffs = compute_cost_coeffs(&graph.last_step, info, comp.ranges());
         let bicliques = find_bicliques(graph, &coeffs);
 
         for bc in bicliques {
@@ -644,8 +637,6 @@ pub fn factorizations(
                 continue;
             }
 
-            // Validate that the biclique is a complete bipartite subgraph:
-            // every left-right pair must have at least one edge.
             let is_complete = bc.left_verts.iter().all(|(lv, _)| {
                 bc.right_verts
                     .iter()
@@ -655,8 +646,6 @@ pub fn factorizations(
                 continue;
             }
 
-            // Deduplicate: same vertex sets produce the same factorization
-            // regardless of coefficient decomposition.
             let mut left_ids: Vec<VertexId> = bc.left_verts.iter().map(|(v, _)| *v).collect();
             let mut right_ids: Vec<VertexId> = bc.right_verts.iter().map(|(v, _)| *v).collect();
             left_ids.sort();
@@ -665,47 +654,36 @@ pub fn factorizations(
                 continue;
             }
 
-            // Collect consumed term indices from bitmask.
             let terms_consumed = bits_to_vec(bc.terms_used);
 
-            // Use the first consumed term to map sum-index bit positions to Index objects.
+            // Use the first consumed term as reference for index naming.
             let repr_term = &def.terms[terms_consumed[0]];
 
-            let contracted_sums = bits_to_indices(graph.last_step.sums, &repr_term.sum_indices);
+            // Reconstruct contracted sum Indices from the LastStepIndices ranges
+            // matched against repr_term's sum_indices.
+            let contracted_sums = match_contracted_sums(
+                &graph.last_step.sums, repr_term,
+            );
             let contracted_ids: HashSet<IndexId> =
                 contracted_sums.iter().map(|i| i.id).collect();
 
             let left_ext = bits_to_indices(graph.last_step.left_ext, &def.ext_indices);
             let right_ext = bits_to_indices(graph.last_step.right_ext, &def.ext_indices);
 
+            let ext_ids: HashSet<IndexId> = def.ext_indices.iter().map(|i| i.id).collect();
+
             let mut intermediates = Vec::new();
 
-            // --- left side ---
             let (left_tid, left_indices) = build_side_ref(
-                &bc.left_verts,
-                Side::Left,
-                graph,
-                def,
-                parenth_results,
-                &left_ext,
-                &contracted_sums,
-                &contracted_ids,
-                &mut intermediates,
-                &mut next_id,
+                &bc.left_verts, Side::Left, graph, def, parenth_results,
+                &left_ext, &contracted_sums, &contracted_ids, &ext_ids,
+                repr_term, &mut intermediates, &mut next_id, comp,
             );
 
-            // --- right side ---
             let (right_tid, right_indices) = build_side_ref(
-                &bc.right_verts,
-                Side::Right,
-                graph,
-                def,
-                parenth_results,
-                &right_ext,
-                &contracted_sums,
-                &contracted_ids,
-                &mut intermediates,
-                &mut next_id,
+                &bc.right_verts, Side::Right, graph, def, parenth_results,
+                &right_ext, &contracted_sums, &contracted_ids, &ext_ids,
+                repr_term, &mut intermediates, &mut next_id, comp,
             );
 
             let coeff = bc
@@ -716,14 +694,8 @@ pub fn factorizations(
                 coeff,
                 sum_indices: contracted_sums,
                 factors: vec![
-                    Factor {
-                        tensor: left_tid,
-                        indices: left_indices,
-                    },
-                    Factor {
-                        tensor: right_tid,
-                        indices: right_indices,
-                    },
+                    Factor { tensor: left_tid, indices: left_indices },
+                    Factor { tensor: right_tid, indices: right_indices },
                 ],
             };
 
@@ -764,16 +736,84 @@ fn bits_to_indices(mut mask: u64, source: &[Index]) -> Vec<Index> {
     out
 }
 
-/// For a vertex on a given side, find the factor subset in the original term
-/// by looking up a representative edge and replicating the normalization from
-/// `build_constr_graphs`.
+/// Reconstruct contracted sum Index objects from a sorted list of RangeIds,
+/// matched against the repr_term's sum_indices by range.
+fn match_contracted_sums(
+    sum_ranges: &[RangeId],
+    repr_term: &Term,
+) -> Vec<Index> {
+    let mut used: HashSet<usize> = HashSet::new();
+    let mut result = Vec::new();
+    for &range in sum_ranges {
+        for (i, idx) in repr_term.sum_indices.iter().enumerate() {
+            if !used.contains(&i) && idx.range == range {
+                result.push(idx.clone());
+                used.insert(i);
+                break;
+            }
+        }
+    }
+    result
+}
+
+/// Build a remap from a vertex's term's sum IndexIds to the repr_term's IndexIds.
+/// Matches contracted sums by range.
+fn build_contracted_remap(
+    vertex_term: &Term,
+    repr_term: &Term,
+    contracted_ids: &HashSet<IndexId>,
+    ext_ids: &HashSet<IndexId>,
+) -> HashMap<IndexId, IndexId> {
+    let mut remap = HashMap::new();
+    let mut used: HashSet<usize> = HashSet::new();
+
+    // For each sum index in the vertex's term that is a contracted sum,
+    // find the corresponding repr_term sum index by range.
+    for v_idx in &vertex_term.sum_indices {
+        if ext_ids.contains(&v_idx.id) {
+            continue;
+        }
+        // Find matching repr_term sum index by range
+        for (ri, r_idx) in repr_term.sum_indices.iter().enumerate() {
+            if !used.contains(&ri) && r_idx.range == v_idx.range && contracted_ids.contains(&r_idx.id) {
+                if v_idx.id != r_idx.id {
+                    remap.insert(v_idx.id, r_idx.id);
+                }
+                used.insert(ri);
+                break;
+            }
+        }
+    }
+
+    remap
+}
+
+/// Apply an IndexId remap to a sub-term's factors and sum_indices.
+fn apply_remap(sub: &mut Term, remap: &HashMap<IndexId, IndexId>) {
+    if remap.is_empty() {
+        return;
+    }
+    for factor in &mut sub.factors {
+        for idx in &mut factor.indices {
+            if let Some(&new_id) = remap.get(idx) {
+                *idx = new_id;
+            }
+        }
+    }
+    for idx in &mut sub.sum_indices {
+        if let Some(&new_id) = remap.get(&idx.id) {
+            idx.id = new_id;
+        }
+    }
+}
+
+/// For a vertex on a given side, find the factor subset in the original term.
 fn vertex_subset(
     v: VertexId,
     side: Side,
     graph: &ConstrGraph,
     parenth_results: &[ParenthResult],
 ) -> (usize, FactorSubset) {
-    // Find any edge involving this vertex on the correct side.
     let (_, _, ei) = match side {
         Side::Left => graph
             .edges
@@ -790,7 +830,7 @@ fn vertex_subset(
     let pr = &parenth_results[ei.term_idx];
     let n = pr.info.n_factors;
     let full_mask: FactorSubset = (1u64 << n) - 1;
-    let interm = &pr.memoir[&full_mask];
+    let interm = &pr.memoir[&(full_mask, 0)];
     let eval = &interm.evals[ei.eval_idx];
 
     let left_ext = pr.info.ext_bits(eval.left);
@@ -809,8 +849,8 @@ fn vertex_subset(
 }
 
 /// Build either a new intermediate TensorDef (when >1 vertex) or a direct
-/// tensor reference (single-factor single vertex).  Returns (TensorId, index
-/// list) for use in the replacement term.
+/// tensor reference (single-factor single vertex).
+#[allow(clippy::too_many_arguments)]
 fn build_side_ref(
     verts: &[(VertexId, Rational)],
     side: Side,
@@ -820,10 +860,12 @@ fn build_side_ref(
     side_ext: &[Index],
     contracted_sums: &[Index],
     contracted_ids: &HashSet<IndexId>,
+    ext_ids: &HashSet<IndexId>,
+    repr_term: &Term,
     intermediates: &mut Vec<TensorDef>,
     next_id: &mut u32,
+    _comp: &TensorComputation,
 ) -> (TensorId, Vec<IndexId>) {
-    // External indices of the intermediate = side's ext + contracted sums.
     let interm_ext: Vec<Index> = side_ext
         .iter()
         .chain(contracted_sums.iter())
@@ -838,7 +880,13 @@ fn build_side_ref(
         let mut terms = Vec::new();
         for &(v, ref coeff) in verts {
             let (term_idx, subset) = vertex_subset(v, side, graph, parenth_results);
-            let sub = make_sub_term(&def.terms[term_idx], subset);
+            let mut sub = make_sub_term(&def.terms[term_idx], subset);
+
+            // Bug 5 fix: remap dummy indices to match repr_term's naming.
+            let remap = build_contracted_remap(
+                &def.terms[term_idx], repr_term, contracted_ids, ext_ids,
+            );
+            apply_remap(&mut sub, &remap);
 
             let sum_indices: Vec<Index> = sub
                 .sum_indices
@@ -862,15 +910,19 @@ fn build_side_ref(
 
         (tid, interm_idx_ids)
     } else {
-        // Single vertex — try to reference the original tensor directly.
         let (term_idx, subset) = vertex_subset(verts[0].0, side, graph, parenth_results);
-        let sub = make_sub_term(&def.terms[term_idx], subset);
+        let mut sub = make_sub_term(&def.terms[term_idx], subset);
+
+        // Bug 5 fix: remap for single vertex too.
+        let remap = build_contracted_remap(
+            &def.terms[term_idx], repr_term, contracted_ids, ext_ids,
+        );
+        apply_remap(&mut sub, &remap);
 
         if sub.factors.len() == 1 {
             let f = &sub.factors[0];
             (f.tensor, f.indices.clone())
         } else {
-            // Multi-factor single vertex: still need an intermediate.
             let tid = TensorId(*next_id);
             *next_id += 1;
 
