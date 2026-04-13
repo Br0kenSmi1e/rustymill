@@ -41,53 +41,9 @@ pub fn apply_factorization(
     }
 }
 
-/// Find the leftmost TensorDef (starting from `start_from`) that has a
-/// profitable factorization, and return its index along with the best one.
+/// Find the leftmost TensorDef (starting from `start_from`) that has
+/// profitable factorizations. Returns all of them sorted by saving descending.
 fn next_decision(
-    comp: &TensorComputation,
-    start_from: usize,
-) -> Option<(usize, Factorization)> {
-    for (i, def) in comp.definitions().iter().enumerate().skip(start_from) {
-        if def.terms.len() < 2 {
-            continue;
-        }
-
-        let prs: Vec<_> = def
-            .terms
-            .iter()
-            .map(|t| parenthesize(t, &def.ext_indices, comp.ranges()))
-            .collect();
-
-        let next_id = comp.next_tensor_id();
-        let facts = factorizations(def, &prs, comp, next_id);
-
-        if let Some(best) = facts.into_iter().filter(|f| f.saving > 0).max_by_key(|f| f.saving) {
-            return Some((i, best));
-        }
-    }
-    None
-}
-
-/// Greedy optimization: repeatedly find and apply the best factorization
-/// for the leftmost TensorDef with profitable bicliques, until none remain.
-///
-/// Returns the number of factorizations applied.
-pub fn greedy_optimize(comp: &mut TensorComputation) -> usize {
-    let mut count = 0;
-    let mut start_from = 0;
-
-    while let Some((def_idx, best)) = next_decision(comp, start_from) {
-        apply_factorization(comp, def_idx, &best);
-        count += 1;
-        start_from = def_idx;
-    }
-
-    count
-}
-
-/// Like `next_decision`, but returns all profitable factorizations for the
-/// leftmost qualifying def, sorted by saving descending.
-fn next_decision_all(
     comp: &TensorComputation,
     start_from: usize,
 ) -> Option<(usize, Vec<Factorization>)> {
@@ -114,6 +70,23 @@ fn next_decision_all(
     None
 }
 
+/// Greedy optimization: repeatedly find and apply the best factorization
+/// for the leftmost TensorDef with profitable bicliques, until none remain.
+///
+/// Returns the number of factorizations applied.
+pub fn greedy_optimize(comp: &mut TensorComputation) -> usize {
+    let mut count = 0;
+    let mut start_from = 0;
+
+    while let Some((def_idx, facts)) = next_decision(comp, start_from) {
+        apply_factorization(comp, def_idx, &facts[0]);
+        count += 1;
+        start_from = def_idx;
+    }
+
+    count
+}
+
 // ---------------------------------------------------------------------------
 // MCTS optimization
 // ---------------------------------------------------------------------------
@@ -128,7 +101,7 @@ struct FactorizationState {
 
 impl FactorizationState {
     fn new(comp: TensorComputation, start_from: usize, greedy_cost: f64) -> Self {
-        match next_decision_all(&comp, start_from) {
+        match next_decision(&comp, start_from) {
             Some((def_idx, _)) => Self {
                 comp,
                 def_idx,
@@ -152,7 +125,7 @@ impl MctsState for FactorizationState {
         if self.terminal {
             return Vec::new();
         }
-        match next_decision_all(&self.comp, self.def_idx) {
+        match next_decision(&self.comp, self.def_idx) {
             Some((_, facts)) => facts,
             None => Vec::new(),
         }
@@ -160,7 +133,7 @@ impl MctsState for FactorizationState {
 
     fn apply_action(&mut self, action: &Factorization) {
         apply_factorization(&mut self.comp, self.def_idx, action);
-        match next_decision_all(&self.comp, self.def_idx) {
+        match next_decision(&self.comp, self.def_idx) {
             Some((idx, _)) => self.def_idx = idx,
             None => self.terminal = true,
         }
@@ -202,7 +175,7 @@ pub fn mcts_optimize(
     // Replay the best action sequence on comp
     let count = actions.len();
     for action in &actions {
-        let (def_idx, _) = next_decision_all(comp, 0).expect("action replay failed");
+        let (def_idx, _) = next_decision(comp, 0).expect("action replay failed");
         apply_factorization(comp, def_idx, action);
     }
 
