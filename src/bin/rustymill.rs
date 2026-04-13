@@ -6,15 +6,19 @@ use rustymill::optimize::greedy_optimize;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    if args.len() < 2 || args.len() > 3 {
-        eprintln!("Usage: {} <input.json> [output.json]", args[0]);
+
+    let no_opt = args.iter().any(|a| a == "--no-opt");
+    let positional: Vec<&String> = args.iter().skip(1).filter(|a| !a.starts_with("--")).collect();
+
+    if positional.is_empty() || positional.len() > 2 {
+        eprintln!("Usage: {} [--no-opt] <input.json> [output.json]", args[0]);
         eprintln!("  Reads a TensorComputation from input.json,");
-        eprintln!("  optimizes it with greedy factorization,");
+        eprintln!("  optimizes it with greedy factorization (unless --no-opt),");
         eprintln!("  and writes the result to output.json (or stdout).");
         std::process::exit(1);
     }
 
-    let input_path = PathBuf::from(&args[1]);
+    let input_path = PathBuf::from(positional[0]);
     let mut comp = read_json(&input_path).unwrap_or_else(|e| {
         eprintln!("Error: {}", e);
         std::process::exit(1);
@@ -23,19 +27,23 @@ fn main() {
     let cost_before = total_cost(&comp);
     eprintln!("Input: {} definitions, cost = {}", comp.definitions().len(), cost_before);
 
-    let n = greedy_optimize(&mut comp);
+    if !no_opt {
+        let n = greedy_optimize(&mut comp);
 
-    let cost_after = total_cost(&comp);
-    eprintln!(
-        "Output: {} definitions, cost = {} (saving = {}, {} factorizations applied)",
-        comp.definitions().len(),
-        cost_after,
-        cost_before as i64 - cost_after as i64,
-        n,
-    );
+        let cost_after = total_cost(&comp);
+        eprintln!(
+            "Output: {} definitions, cost = {} (saving = {}, {} factorizations applied)",
+            comp.definitions().len(),
+            cost_after,
+            cost_before as i64 - cost_after as i64,
+            n,
+        );
+    } else {
+        eprintln!("Skipping optimization (--no-opt)");
+    }
 
-    if args.len() == 3 {
-        let output_path = PathBuf::from(&args[2]);
+    if positional.len() == 2 {
+        let output_path = PathBuf::from(positional[1]);
         write_json(&comp, &output_path).unwrap_or_else(|e| {
             eprintln!("Error: {}", e);
             std::process::exit(1);
