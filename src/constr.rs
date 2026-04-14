@@ -324,6 +324,8 @@ pub struct Delta {
     pub terms: u64,
     pub exc_cost: i64,
     pub saving: i64,
+    /// Once set, this vertex can never rejoin the candidate set.
+    pub excluded: bool,
 }
 
 impl Delta {
@@ -334,6 +336,7 @@ impl Delta {
             terms: 0,
             exc_cost: 0,
             saving: 0,
+            excluded: false,
         }
     }
 }
@@ -408,7 +411,7 @@ fn expand(
     let n_left = left_verts.len();
     let n_right = right_verts.len();
 
-    let is_maximal = subg.iter().all(|(_, d)| d.saving < 0);
+    let is_maximal = subg.iter().all(|(_, d)| d.saving < 0 || d.excluded);
     let is_profitable = n_left > 0 && n_right > 0 && (n_left > 1 || n_right > 1);
 
     if is_maximal && is_profitable {
@@ -447,7 +450,7 @@ fn expand(
 
     let candidates: Vec<(VertexId, Delta)> = subg
         .iter()
-        .filter(|(_, d)| d.saving >= 0)
+        .filter(|(_, d)| d.saving >= 0 && !d.excluded)
         .cloned()
         .collect();
 
@@ -458,6 +461,11 @@ fn expand(
         let mut new_subg = Vec::new();
         for &(s_v, ref s_d) in &subg {
             if s_v == q_v {
+                continue;
+            }
+            // Once structurally excluded, stay excluded forever.
+            if s_d.excluded {
+                new_subg.push((s_v, s_d.clone()));
                 continue;
             }
             match update_delta(graph, coeffs, state, q_v, q_d, s_v, s_d) {
@@ -479,6 +487,7 @@ fn expand(
                 None => {
                     let mut excluded = s_d.clone();
                     excluded.saving = -1;
+                    excluded.excluded = true;
                     new_subg.push((s_v, excluded));
                 }
             }
@@ -536,6 +545,7 @@ pub fn update_delta(
         terms: curr_d.terms,
         exc_cost: curr_d.exc_cost,
         saving: 0,
+        excluded: false,
     };
 
     if new_side == curr_side {
