@@ -2,14 +2,13 @@ use rustymill::canon::canon_term;
 use rustymill::repr::*;
 use num::rational::Ratio;
 
-fn make_no_sym_tensor(id: TensorId, slots: &[RangeId]) -> TensorInfo {
-    TensorInfo { id, slots: slots.to_vec(), symmetry: vec![] }
+fn make_no_sym_tensor(id: TensorId) -> TensorInfo {
+    TensorInfo { id, symmetry: vec![] }
 }
 
-fn make_antisym_tensor(id: TensorId, range: RangeId) -> TensorInfo {
+fn make_antisym_tensor(id: TensorId) -> TensorInfo {
     TensorInfo {
         id,
-        slots: vec![range, range],
         symmetry: vec![SymGenerator { perm: vec![1, 0], action: SymAction::Negate }],
     }
 }
@@ -18,8 +17,8 @@ fn make_antisym_tensor(id: TensorId, range: RangeId) -> TensorInfo {
 fn test_canon_sorts_factors() {
     let occ = RangeId(0);
     let tensors = vec![
-        make_no_sym_tensor(TensorId(0), &[occ, occ]),
-        make_no_sym_tensor(TensorId(1), &[occ, occ]),
+        make_no_sym_tensor(TensorId(0)),
+        make_no_sym_tensor(TensorId(1)),
     ];
     let a = IndexId(0);
     let b = IndexId(1);
@@ -50,8 +49,8 @@ fn test_canon_sorts_factors() {
 fn test_canon_dummy_renaming() {
     let occ = RangeId(0);
     let tensors = vec![
-        make_no_sym_tensor(TensorId(0), &[occ, occ]),
-        make_no_sym_tensor(TensorId(1), &[occ, occ]),
+        make_no_sym_tensor(TensorId(0)),
+        make_no_sym_tensor(TensorId(1)),
     ];
     let a = IndexId(0);
     let b = IndexId(1);
@@ -82,7 +81,7 @@ fn test_canon_dummy_renaming() {
 #[test]
 fn test_canon_antisymmetric_tensor() {
     let occ = RangeId(0);
-    let tensors = vec![make_antisym_tensor(TensorId(0), occ)];
+    let tensors = vec![make_antisym_tensor(TensorId(0))];
     let i = IndexId(0);
     let j = IndexId(1);
     let term_ji = Term {
@@ -106,7 +105,6 @@ fn test_canon_symmetric_tensor() {
     let occ = RangeId(0);
     let tensors = vec![TensorInfo {
         id: TensorId(0),
-        slots: vec![occ, occ],
         symmetry: vec![SymGenerator { perm: vec![1, 0], action: SymAction::Identity }],
     }];
     let i = IndexId(0);
@@ -133,9 +131,9 @@ fn test_canon_dummy_renaming_across_ranges() {
     let occ = RangeId(0);
     let virt = RangeId(1);
     let tensors = vec![
-        make_no_sym_tensor(TensorId(0), &[occ, occ]),
-        make_no_sym_tensor(TensorId(1), &[occ, virt]),
-        make_no_sym_tensor(TensorId(2), &[virt, occ]),
+        make_no_sym_tensor(TensorId(0)),
+        make_no_sym_tensor(TensorId(1)),
+        make_no_sym_tensor(TensorId(2)),
     ];
     let a = IndexId(0);
     let b = IndexId(1);
@@ -170,7 +168,7 @@ fn test_canon_dummy_renaming_across_ranges() {
 #[test]
 fn test_canon_different_coefficients() {
     let occ = RangeId(0);
-    let tensors = vec![make_no_sym_tensor(TensorId(0), &[occ, occ])];
+    let tensors = vec![make_no_sym_tensor(TensorId(0))];
     let i = IndexId(0);
     let j = IndexId(1);
     let ext = vec![Index { id: i, range: occ }, Index { id: j, range: occ }];

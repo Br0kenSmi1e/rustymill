@@ -19,10 +19,10 @@ fn make_shared_factor_def() -> (TensorComputation, TensorDef, Vec<ParenthResult>
     let occ = comp.add_range(10);
 
     // Tensors: t(0), X(1), Y(2), Z(3)
-    let _t = comp.add_tensor(&[occ, occ], vec![]);
-    let _x = comp.add_tensor(&[occ, occ], vec![]);
-    let _y = comp.add_tensor(&[occ, occ], vec![]);
-    let _z = comp.add_tensor(&[occ, occ], vec![]);
+    let _t = comp.add_tensor(vec![]);
+    let _x = comp.add_tensor(vec![]);
+    let _y = comp.add_tensor(vec![]);
+    let _z = comp.add_tensor(vec![]);
 
     let a = IndexId(0);
     let b = IndexId(1);
@@ -82,11 +82,11 @@ fn make_mixed_terms_def() -> (TensorComputation, TensorDef, Vec<ParenthResult>) 
     let mut comp = TensorComputation::new();
     let occ = comp.add_range(10);
 
-    let _t = comp.add_tensor(&[occ, occ], vec![]);
-    let _x = comp.add_tensor(&[occ, occ], vec![]);
-    let _y = comp.add_tensor(&[occ, occ], vec![]);
-    let _z = comp.add_tensor(&[occ, occ], vec![]);
-    let _w = comp.add_tensor(&[occ, occ], vec![]);
+    let _t = comp.add_tensor(vec![]);
+    let _x = comp.add_tensor(vec![]);
+    let _y = comp.add_tensor(vec![]);
+    let _z = comp.add_tensor(vec![]);
+    let _w = comp.add_tensor(vec![]);
 
     let a = IndexId(0);
     let b = IndexId(1);
@@ -288,11 +288,11 @@ fn test_delta_same_part_no_constraint() {
 fn make_full_biclique_def() -> (TensorComputation, TensorDef, Vec<ParenthResult>) {
     let mut comp = TensorComputation::new();
     let occ = comp.add_range(10);
-    let _t = comp.add_tensor(&[occ, occ], vec![]); // 0
-    let _x = comp.add_tensor(&[occ, occ], vec![]); // 1
-    let _y = comp.add_tensor(&[occ, occ], vec![]); // 2
-    let _p = comp.add_tensor(&[occ, occ], vec![]); // 3
-    let _q = comp.add_tensor(&[occ, occ], vec![]); // 4
+    let _t = comp.add_tensor(vec![]); // 0
+    let _x = comp.add_tensor(vec![]); // 1
+    let _y = comp.add_tensor(vec![]); // 2
+    let _p = comp.add_tensor(vec![]); // 3
+    let _q = comp.add_tensor(vec![]); // 4
 
     let a = IndexId(0);
     let b = IndexId(1);
@@ -422,11 +422,11 @@ fn test_factorizations_full_biclique() {
 fn test_factorizations_no_sharing() {
     let mut comp = TensorComputation::new();
     let occ = comp.add_range(10);
-    let _x = comp.add_tensor(&[occ, occ], vec![]);
-    let _y = comp.add_tensor(&[occ, occ], vec![]);
-    let _p = comp.add_tensor(&[occ, occ], vec![]);
-    let _q = comp.add_tensor(&[occ, occ], vec![]);
-    let t = comp.add_tensor(&[occ, occ], vec![]);
+    let _x = comp.add_tensor(vec![]);
+    let _y = comp.add_tensor(vec![]);
+    let _p = comp.add_tensor(vec![]);
+    let _q = comp.add_tensor(vec![]);
+    let t = comp.add_tensor(vec![]);
 
     let a = IndexId(0);
     let b = IndexId(1);

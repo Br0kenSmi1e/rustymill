@@ -88,7 +88,6 @@ pub struct Index {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TensorInfo {
     pub id: TensorId,
-    pub slots: Vec<RangeId>,
     pub symmetry: Vec<SymGenerator>,
 }
 
@@ -212,11 +211,10 @@ impl TensorComputation {
         id
     }
 
-    pub fn add_tensor(&mut self, slots: &[RangeId], symmetry: Vec<SymGenerator>) -> TensorId {
+    pub fn add_tensor(&mut self, symmetry: Vec<SymGenerator>) -> TensorId {
         let id = TensorId(self.tensors.len() as u32);
         self.tensors.push(TensorInfo {
             id,
-            slots: slots.to_vec(),
             symmetry,
         });
         id

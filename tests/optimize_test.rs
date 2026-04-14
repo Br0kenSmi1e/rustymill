@@ -9,10 +9,10 @@ fn test_greedy_optimize_shared_factor() {
     // Should factor out Z: tau[a,c] = X[a,c] + Y[a,c], t[a,b] = tau[a,c]*Z[c,b]
     let mut comp = TensorComputation::new();
     let occ = comp.add_range(10);
-    let _x = comp.add_tensor(&[occ, occ], vec![]);
-    let _y = comp.add_tensor(&[occ, occ], vec![]);
-    let _z = comp.add_tensor(&[occ, occ], vec![]);
-    let t = comp.add_tensor(&[occ, occ], vec![]);
+    let _x = comp.add_tensor(vec![]);
+    let _y = comp.add_tensor(vec![]);
+    let _z = comp.add_tensor(vec![]);
+    let t = comp.add_tensor(vec![]);
 
     let a = IndexId(0);
     let b = IndexId(1);
@@ -59,11 +59,11 @@ fn test_greedy_optimize_full_biclique() {
     // t[a,b] = 4*X*U + 2*X*V - 2*Y*U - Y*V
     let mut comp = TensorComputation::new();
     let occ = comp.add_range(10);
-    let _x = comp.add_tensor(&[occ, occ], vec![]);
-    let _y = comp.add_tensor(&[occ, occ], vec![]);
-    let _u = comp.add_tensor(&[occ, occ], vec![]);
-    let _v = comp.add_tensor(&[occ, occ], vec![]);
-    let t = comp.add_tensor(&[occ, occ], vec![]);
+    let _x = comp.add_tensor(vec![]);
+    let _y = comp.add_tensor(vec![]);
+    let _u = comp.add_tensor(vec![]);
+    let _v = comp.add_tensor(vec![]);
+    let t = comp.add_tensor(vec![]);
 
     let a = IndexId(0);
     let b = IndexId(1);
@@ -112,8 +112,8 @@ fn test_greedy_optimize_nothing_to_do() {
     // Single term, nothing to factorize
     let mut comp = TensorComputation::new();
     let occ = comp.add_range(10);
-    let _a = comp.add_tensor(&[occ, occ], vec![]);
-    let t = comp.add_tensor(&[occ, occ], vec![]);
+    let _a = comp.add_tensor(vec![]);
+    let t = comp.add_tensor(vec![]);
 
     let a = IndexId(0);
     let b = IndexId(1);
