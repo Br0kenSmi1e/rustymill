@@ -422,7 +422,8 @@ pub fn expand(
         is_maximal |= delta.saving > 0;
     }
     // verify maximal & profitable, return
-    if is_maximal && (biclique.saving > 0) {
+    let has_sharing = biclique.left_verts.len() >= 2 || biclique.right_verts.len() >= 2;
+    if !is_maximal && has_sharing && (biclique.saving > 0) {
         results.push(biclique.clone());
     }
     // quadratic loop to prune cand
@@ -446,9 +447,9 @@ pub fn expand(
                 cand.remove(idx);
             }
             push(biclique, q, graph.vertex_side[q.0], dq);
-            if let Some(subgq_q) = subgq.get_mut(&q) {
-                expand(graph, coeffs, biclique, subgq_q, cand, results);
-            }
+            let mut empty = HashMap::new();
+            let sub = subgq.get_mut(&q).unwrap_or(&mut empty);
+            expand(graph, coeffs, biclique, sub, cand, results);
             pop(biclique, q, graph.vertex_side[q.0], dq);
         }
     }
@@ -494,7 +495,6 @@ pub fn update_delta(
             .fold(0u64, |acc, mask| acc | mask);
         
         if (bitmask & dq.terms) != 0
-            || (bitmask & dr.terms) != 0
             || (bitmask & biclique.terms_used) != 0
         {
             return None;
@@ -535,10 +535,11 @@ pub fn sift(
     subgq: &HashMap<VertexId, HashMap<VertexId, Delta>>,
 ) -> Vec<VertexId> {
     if biclique.left_verts.is_empty() {
-        return cand.iter()
+        let r: Vec<VertexId> = cand.iter()
             .filter(|q| graph.vertex_side[q.0] == Side::Left)
             .copied()
             .collect();
+        return r;
     }
 
     let curr: Vec<VertexId> = if biclique.right_verts.is_empty() {
@@ -552,7 +553,6 @@ pub fn sift(
             .copied()
             .collect()
     };
-
     let mut best_f: Vec<VertexId> = Vec::new();
     let mut max_intersection = 0;
 
@@ -575,9 +575,10 @@ pub fn sift(
         }
     }
 
-    curr.into_iter()
+    let result: Vec<VertexId> = curr.into_iter()
         .filter(|v| !best_f.contains(v))
-        .collect()
+        .collect();
+    result
 }
 
 pub fn push(
