@@ -91,6 +91,39 @@ pub fn make_sub_term(term: &Term, subset: FactorSubset) -> Term {
 // Graph construction
 // ---------------------------------------------------------------------------
 
+/// Compute the external indices of a sub-term: all indices appearing in its
+/// factors that are not dummy (sum) indices within the sub-term.
+fn sub_ext_indices(sub: &Term, full_term: &Term, def_ext: &[Index], comp: &TensorComputation) -> Vec<Index> {
+    let dummy_ids: HashSet<IndexId> = sub.sum_indices.iter().map(|i| i.id).collect();
+    // Build a map of all known IndexId -> RangeId from full_term, def_ext, and all comp definitions
+    let mut all_indices: HashMap<IndexId, RangeId> = HashMap::new();
+    for i in full_term.sum_indices.iter().chain(def_ext.iter()) {
+        all_indices.insert(i.id, i.range);
+    }
+    for def in comp.definitions() {
+        for i in &def.ext_indices {
+            all_indices.insert(i.id, i.range);
+        }
+        for term in &def.terms {
+            for i in &term.sum_indices {
+                all_indices.insert(i.id, i.range);
+            }
+        }
+    }
+    let mut seen = HashSet::new();
+    let mut result = Vec::new();
+    for factor in &sub.factors {
+        for &idx_id in &factor.indices {
+            if !dummy_ids.contains(&idx_id) && seen.insert(idx_id) {
+                if let Some(&range) = all_indices.get(&idx_id) {
+                    result.push(Index { id: idx_id, range });
+                }
+            }
+        }
+    }
+    result
+}
+
 /// Build constriction graphs from a parenthesized tensor definition.
 ///
 /// For each term with 2+ factors, every binary split (eval) of the full factor
@@ -146,8 +179,8 @@ pub fn build_constr_graphs(
             let left_sub = make_sub_term(term, left_subset);
             let right_sub = make_sub_term(term, right_subset);
 
-            let left_canon = canon_term(&left_sub, &def.ext_indices, comp.tensors());
-            let right_canon = canon_term(&right_sub, &def.ext_indices, comp.tensors());
+            let left_canon = canon_term(&left_sub, &sub_ext_indices(&left_sub, term, &def.ext_indices, comp), comp.tensors());
+            let right_canon = canon_term(&right_sub, &sub_ext_indices(&right_sub, term, &def.ext_indices, comp), comp.tensors());
 
             let edge_info = EdgeInfo {
                 term_idx,
@@ -633,7 +666,6 @@ pub fn factorizations(
 ) -> Vec<Factorization> {
     let graphs = build_constr_graphs(def, comp, parenth_results);
     let mut results = Vec::new();
-    let mut next_id = next_tensor_id.0;
 
     let mut seen_vertex_sets: HashSet<(Vec<VertexId>, Vec<VertexId>)> = HashSet::new();
 
@@ -689,16 +721,17 @@ pub fn factorizations(
 
             let mut intermediates = Vec::new();
 
+            let mut candidate_id = next_tensor_id.0;
             let (left_tid, left_indices) = build_side_ref(
                 &bc.left_verts, Side::Left, graph, def, parenth_results,
                 &left_ext, &contracted_sums, &contracted_ids, &ext_ids,
-                repr_term, &mut intermediates, &mut next_id, comp,
+                repr_term, &mut intermediates, &mut candidate_id, comp,
             );
 
             let (right_tid, right_indices) = build_side_ref(
                 &bc.right_verts, Side::Right, graph, def, parenth_results,
                 &right_ext, &contracted_sums, &contracted_ids, &ext_ids,
-                repr_term, &mut intermediates, &mut next_id, comp,
+                repr_term, &mut intermediates, &mut candidate_id, comp,
             );
 
             let coeff = bc
