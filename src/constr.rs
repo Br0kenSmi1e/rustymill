@@ -704,13 +704,47 @@ pub fn factorizations(
             let terms_consumed = bits_to_vec(bc.terms_used);
 
             // Use the first consumed term as reference for index naming.
-            let repr_term = &def.terms[terms_consumed[0]];
+            let repr_term_idx = terms_consumed[0];
+            let repr_term = &def.terms[repr_term_idx];
 
-            // Reconstruct contracted sum Indices from the LastStepIndices ranges
-            // matched against repr_term's sum_indices.
-            let contracted_sums = match_contracted_sums(
-                &graph.last_step.sums, repr_term,
-            );
+            // Reconstruct contracted sum Indices by finding which indices
+            // appear in both the left and right factor subsets of repr_term.
+            let contracted_sums = {
+                let repr_edge = graph.edges.iter().find(|(l, r, ei)| {
+                    ei.term_idx == repr_term_idx
+                        && bc.left_verts.iter().any(|(v, _)| *v == *l)
+                        && bc.right_verts.iter().any(|(v, _)| *v == *r)
+                });
+                if let Some((_, _, repr_ei)) = repr_edge {
+                    // Use repr_edge's eval to get the exact factor subsets for repr_term.
+                    let pr = &parenth_results[repr_term_idx];
+                    let full_mask = (1u64 << pr.info.n_factors) - 1;
+                    let eval = &pr.memoir[&(full_mask, 0)].evals[repr_ei.eval_idx];
+                    // Normalize left/right the same way build_constr_graphs does.
+                    let (left_subset, right_subset) = {
+                        let le = pr.info.ext_bits(eval.left);
+                        let re = pr.info.ext_bits(eval.right);
+                        if le <= re { (eval.left, eval.right) } else { (eval.right, eval.left) }
+                    };
+                    let ids_in_subset = |mut s: u64| -> HashSet<IndexId> {
+                        let mut ids = HashSet::new();
+                        while s != 0 {
+                            let i = s.trailing_zeros() as usize;
+                            for &idx in &repr_term.factors[i].indices { ids.insert(idx); }
+                            s &= s - 1;
+                        }
+                        ids
+                    };
+                    let left_ids = ids_in_subset(left_subset);
+                    let right_ids = ids_in_subset(right_subset);
+                    repr_term.sum_indices.iter()
+                        .filter(|idx| left_ids.contains(&idx.id) && right_ids.contains(&idx.id))
+                        .cloned()
+                        .collect()
+                } else {
+                    match_contracted_sums(&graph.last_step.sums, repr_term)
+                }
+            };
             let contracted_ids: HashSet<IndexId> =
                 contracted_sums.iter().map(|i| i.id).collect();
 
@@ -726,12 +760,14 @@ pub fn factorizations(
                 &bc.left_verts, Side::Left, graph, def, parenth_results,
                 &left_ext, &contracted_sums, &contracted_ids, &ext_ids,
                 repr_term, &mut intermediates, &mut candidate_id, comp,
+                &bc.left_verts, &bc.right_verts,
             );
 
             let (right_tid, right_indices) = build_side_ref(
                 &bc.right_verts, Side::Right, graph, def, parenth_results,
                 &right_ext, &contracted_sums, &contracted_ids, &ext_ids,
                 repr_term, &mut intermediates, &mut candidate_id, comp,
+                &bc.left_verts, &bc.right_verts,
             );
 
             let coeff = bc
@@ -811,21 +847,30 @@ fn build_contracted_remap(
     repr_term: &Term,
     contracted_ids: &HashSet<IndexId>,
     ext_ids: &HashSet<IndexId>,
+    vertex_contracted_ids: &HashSet<IndexId>,
 ) -> HashMap<IndexId, IndexId> {
     let mut remap = HashMap::new();
     let mut used: HashSet<usize> = HashSet::new();
 
-    // For each sum index in the vertex's term that is a contracted sum,
-    // find the corresponding repr_term sum index by range.
+    // Collect all index IDs present in vertex_term's factors
+    let factor_ids: HashSet<IndexId> = vertex_term.factors.iter()
+        .flat_map(|f| f.indices.iter().copied())
+        .collect();
+
+    // Only remap indices that are actually contracted for this vertex term.
     for v_idx in &vertex_term.sum_indices {
-        if ext_ids.contains(&v_idx.id) {
+        if ext_ids.contains(&v_idx.id) || !vertex_contracted_ids.contains(&v_idx.id) {
             continue;
         }
-        // Find matching repr_term sum index by range
         for (ri, r_idx) in repr_term.sum_indices.iter().enumerate() {
             if !used.contains(&ri) && r_idx.range == v_idx.range && contracted_ids.contains(&r_idx.id) {
                 if v_idx.id != r_idx.id {
-                    remap.insert(v_idx.id, r_idx.id);
+                    if factor_ids.contains(&r_idx.id) {
+                        remap.insert(v_idx.id, r_idx.id);
+                        remap.insert(r_idx.id, v_idx.id);
+                    } else {
+                        remap.insert(v_idx.id, r_idx.id);
+                    }
                 }
                 used.insert(ri);
                 break;
@@ -896,8 +941,41 @@ fn vertex_subset(
     (ei.term_idx, subset)
 }
 
-/// Build either a new intermediate TensorDef (when >1 vertex) or a direct
-/// tensor reference (single-factor single vertex).
+/// Compute the contracted IndexIds for a vertex term: indices that appear
+/// in both the left and right factor subsets of the vertex's split.
+fn vertex_contracted_ids(
+    v: VertexId,
+    side: Side,
+    graph: &ConstrGraph,
+    parenth_results: &[ParenthResult],
+    def: &TensorDef,
+    bc_left: &[(VertexId, Rational)],
+    bc_right: &[(VertexId, Rational)],
+) -> HashSet<IndexId> {
+    let edge = graph.edges.iter().find(|(l, r, _)| match side {
+        Side::Left => *l == v && bc_right.iter().any(|(rv, _)| *rv == *r),
+        Side::Right => *r == v && bc_left.iter().any(|(lv, _)| *lv == *l),
+    });
+    let Some((_, _, ei)) = edge else { return HashSet::new(); };
+    let pr = &parenth_results[ei.term_idx];
+    let full_mask = (1u64 << pr.info.n_factors) - 1;
+    let eval = &pr.memoir[&(full_mask, 0)].evals[ei.eval_idx];
+    let (ls, rs) = { let le = pr.info.ext_bits(eval.left); let re = pr.info.ext_bits(eval.right);
+        if le <= re { (eval.left, eval.right) } else { (eval.right, eval.left) } };
+    let ids_in = |mut s: u64| -> HashSet<IndexId> {
+        let mut ids = HashSet::new();
+        while s != 0 { let i = s.trailing_zeros() as usize;
+            for &x in &def.terms[ei.term_idx].factors[i].indices { ids.insert(x); }
+            s &= s - 1; }
+        ids
+    };
+    let li = ids_in(ls); let ri = ids_in(rs);
+    def.terms[ei.term_idx].sum_indices.iter()
+        .filter(|idx| li.contains(&idx.id) && ri.contains(&idx.id))
+        .map(|idx| idx.id).collect()
+}
+
+
 #[allow(clippy::too_many_arguments)]
 fn build_side_ref(
     verts: &[(VertexId, Rational)],
@@ -913,6 +991,8 @@ fn build_side_ref(
     intermediates: &mut Vec<TensorDef>,
     next_id: &mut u32,
     _comp: &TensorComputation,
+    bc_left: &[(VertexId, Rational)],
+    bc_right: &[(VertexId, Rational)],
 ) -> (TensorId, Vec<IndexId>) {
     let interm_ext: Vec<Index> = side_ext
         .iter()
@@ -930,9 +1010,10 @@ fn build_side_ref(
             let (term_idx, subset) = vertex_subset(v, side, graph, parenth_results);
             let mut sub = make_sub_term(&def.terms[term_idx], subset);
 
-            // Bug 5 fix: remap dummy indices to match repr_term's naming.
+            // Remap contracted indices to match repr_term's naming.
+            let v_contracted = vertex_contracted_ids(v, side, graph, parenth_results, def, bc_left, bc_right);
             let remap = build_contracted_remap(
-                &def.terms[term_idx], repr_term, contracted_ids, ext_ids,
+                &def.terms[term_idx], repr_term, contracted_ids, ext_ids, &v_contracted,
             );
             apply_remap(&mut sub, &remap);
 
@@ -962,12 +1043,16 @@ fn build_side_ref(
         let mut sub = make_sub_term(&def.terms[term_idx], subset);
 
         // Bug 5 fix: remap for single vertex too.
+        let v_contracted = vertex_contracted_ids(verts[0].0, side, graph, parenth_results, def, bc_left, bc_right);
         let remap = build_contracted_remap(
-            &def.terms[term_idx], repr_term, contracted_ids, ext_ids,
+            &def.terms[term_idx], repr_term, contracted_ids, ext_ids, &v_contracted,
         );
         apply_remap(&mut sub, &remap);
 
-        if sub.factors.len() == 1 {
+        let has_orphan_sums = sub.sum_indices.iter().any(|idx| {
+            !contracted_ids.contains(&idx.id) && !ext_ids.contains(&idx.id)
+        });
+        if sub.factors.len() == 1 && !has_orphan_sums {
             let f = &sub.factors[0];
             (f.tensor, f.indices.clone())
         } else {
