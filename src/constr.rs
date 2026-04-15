@@ -234,9 +234,9 @@ fn ensure_vertex(
 /// Precomputed cost coefficients for a constriction graph's index pattern.
 #[derive(Clone, Debug)]
 pub struct CostCoeffs {
-    pub final_cost: u64,
-    pub prep_left: u64,
-    pub prep_right: u64,
+    pub saving: u64,
+    pub left: u64,
+    pub right: u64,
 }
 
 /// Compute cost coefficients for a given index pattern.
@@ -258,28 +258,27 @@ pub fn compute_cost_coeffs(
     } else {
         2 * ext_size * sum_size
     };
-    let final_cost = contraction + ext_size;
 
     let prep_left = left_ext_size * sum_size;
     let prep_right = right_ext_size * sum_size;
 
     CostCoeffs {
-        final_cost,
-        prep_left,
-        prep_right,
+        saving: contraction + left_ext_size * right_ext_size,
+        left: prep_left,
+        right: prep_right,
     }
 }
 
 /// Compute gross savings for adding a vertex to each side.
 /// Returns (gross_for_adding_left, gross_for_adding_right).
-pub fn gross_saving(coeffs: &CostCoeffs, n_left: usize, n_right: usize) -> (i64, i64) {
-    if n_left == 0 || n_right == 0 {
-        return (0, 0);
-    }
-    let gl = (n_right as i64) * (coeffs.final_cost as i64) - (coeffs.prep_left as i64);
-    let gr = (n_left as i64) * (coeffs.final_cost as i64) - (coeffs.prep_right as i64);
-    (gl, gr)
-}
+// pub fn gross_saving(coeffs: &CostCoeffs, n_left: usize, n_right: usize) -> (i64, i64) {
+//     if n_left == 0 || n_right == 0 {
+//         return (0, 0);
+//     }
+//     let gl = (n_right as i64) * (coeffs.final_cost as i64) - (coeffs.prep_left as i64);
+//     let gr = (n_left as i64) * (coeffs.final_cost as i64) - (coeffs.prep_right as i64);
+//     (gl, gr)
+// }
 
 // ---------------------------------------------------------------------------
 // ConstrGraph helpers
@@ -324,8 +323,6 @@ pub struct Delta {
     pub terms: u64,
     pub exc_cost: i64,
     pub saving: i64,
-    /// Once set, this vertex can never rejoin the candidate set.
-    pub excluded: bool,
 }
 
 impl Delta {
@@ -336,7 +333,6 @@ impl Delta {
             terms: 0,
             exc_cost: 0,
             saving: 0,
-            excluded: false,
         }
     }
 }
@@ -379,232 +375,240 @@ pub fn find_bicliques(graph: &ConstrGraph, coeffs: &CostCoeffs) -> Vec<Biclique>
         return Vec::new();
     }
 
-    let subg: Vec<(VertexId, Delta)> = (0..n)
+    let mut biclique = Biclique {
+        left_verts: Vec::new(),
+        right_verts: Vec::new(),
+        leading_coeff: None,
+        terms_used: 0,
+        saving: 0,
+    };
+    let mut cand: Vec<VertexId> = (0..n)
+        .map(|v| VertexId(v))
+        .collect();
+    let mut subg: HashMap<VertexId, Delta> = (0..n)
         .map(|v| (VertexId(v), Delta::initial()))
         .collect();
 
     let mut results = Vec::new();
-    let mut state = BronKerboschState::new();
 
     expand(
         graph,
         coeffs,
-        &mut state,
-        &mut Vec::new(),
-        &mut Vec::new(),
-        subg,
+        &mut biclique,
+        &mut subg,
+        &mut cand,
         &mut results,
     );
 
     results
 }
 
-fn expand(
+pub fn expand(
     graph: &ConstrGraph,
     coeffs: &CostCoeffs,
-    state: &mut BronKerboschState,
-    left_verts: &mut Vec<(VertexId, Rational)>,
-    right_verts: &mut Vec<(VertexId, Rational)>,
-    subg: Vec<(VertexId, Delta)>,
+    biclique: &mut Biclique,
+    subg: &mut HashMap<VertexId, Delta>,
+    cand: &mut Vec<VertexId>,
     results: &mut Vec<Biclique>,
 ) {
-    let n_left = left_verts.len();
-    let n_right = right_verts.len();
-
-    let is_maximal = subg.iter().all(|(_, d)| d.saving < 0 || d.excluded);
-    let is_profitable = n_left > 0 && n_right > 0 && (n_left > 1 || n_right > 1);
-
-    if is_maximal && is_profitable {
-        let mut total_exc_cost: i64 = 0;
-        let mut terms_used = 0u64;
-        for &(lv, _) in left_verts.iter() {
-            for &(rv, _) in right_verts.iter() {
-                let edges = graph.edges_between(lv, rv);
-                for edge in &edges {
-                    let et = 1u64 << edge.term_idx;
-                    if terms_used & et == 0 {
-                        total_exc_cost += edge.exc_cost as i64;
-                        terms_used |= et;
-                        break;
-                    }
-                }
+    // update subg saving
+    let mut is_maximal = false;
+    for (q, delta) in subg.iter_mut() {
+        let q_side = graph.vertex_side[q.0];
+        delta.saving = match q_side {
+            Side::Left => - (coeffs.left as i64) + (biclique.right_verts.len() as i64) * (coeffs.saving as i64),
+            Side::Right => - (coeffs.right as i64) + (biclique.left_verts.len() as i64) * (coeffs.saving as i64),
+        } - delta.exc_cost;
+        is_maximal |= delta.saving > 0;
+    }
+    // verify maximal & profitable, return
+    if is_maximal && (biclique.saving > 0) {
+        results.push(biclique.clone());
+    }
+    // quadratic loop to prune cand
+    let mut subgq: HashMap<VertexId, HashMap<VertexId, Delta>> = HashMap::new();
+    for (q, dq) in subg.iter() {
+        for (r, dr) in subg.iter() {
+            if let Some(update) = update_delta(graph, biclique, *q, dq, *r, dr) {
+                subgq
+                    .entry(*q)
+                    .or_insert_with(HashMap::new)
+                    .insert(*r, update);
             }
-        }
-
-        let saving = (n_left * n_right) as i64 * coeffs.final_cost as i64
-            - coeffs.final_cost as i64
-            - (n_left.saturating_sub(1)) as i64 * coeffs.prep_left as i64
-            - (n_right.saturating_sub(1)) as i64 * coeffs.prep_right as i64
-            - total_exc_cost;
-
-        if saving >= 0 {
-            results.push(Biclique {
-                left_verts: left_verts.clone(),
-                right_verts: right_verts.clone(),
-                leading_coeff: state.leading_coeff.clone(),
-                terms_used,
-                saving,
-            });
         }
     }
-
-    let candidates: Vec<(VertexId, Delta)> = subg
-        .iter()
-        .filter(|(_, d)| d.saving >= 0 && !d.excluded)
-        .cloned()
-        .collect();
-
-    for (q_v, q_d) in &candidates {
-        let q_v = *q_v;
-        let q_side = graph.vertex_side[q_v.0];
-
-        let mut new_subg = Vec::new();
-        for &(s_v, ref s_d) in &subg {
-            if s_v == q_v {
-                continue;
+    // add cand and recurse
+    let curr: Vec<VertexId> = sift(graph, biclique, cand, subg, &subgq);
+    for i in 0..curr.len() {
+        let q = curr[i];
+        if let Some(dq) = subg.get(&q) {
+            if let Some(idx) = cand.iter().position(|v| *v == q) {
+                cand.remove(idx);
             }
-            // Once structurally excluded, stay excluded forever.
-            if s_d.excluded {
-                new_subg.push((s_v, s_d.clone()));
-                continue;
+            push(biclique, q, graph.vertex_side[q.0], dq);
+            if let Some(subgq_q) = subgq.get_mut(&q) {
+                expand(graph, coeffs, biclique, subgq_q, cand, results);
             }
-            match update_delta(graph, coeffs, state, q_v, q_d, s_v, s_d) {
-                Some(mut updated) => {
-                    let mut nl = state.n_left;
-                    let mut nr = state.n_right;
-                    match q_side {
-                        Side::Left => nl += 1,
-                        Side::Right => nr += 1,
-                    }
-                    let (gl, gr) = gross_saving(coeffs, nl, nr);
-                    let gross = match graph.vertex_side[s_v.0] {
-                        Side::Left => gl,
-                        Side::Right => gr,
-                    };
-                    updated.saving = gross - updated.exc_cost;
-                    new_subg.push((s_v, updated));
-                }
-                None => {
-                    let mut excluded = s_d.clone();
-                    excluded.saving = -1;
-                    excluded.excluded = true;
-                    new_subg.push((s_v, excluded));
-                }
-            }
+            pop(biclique, q, graph.vertex_side[q.0], dq);
         }
-
-        let prev_leading = state.leading_coeff.clone();
-        let prev_terms = state.terms_used;
-        let prev_n_left = state.n_left;
-        let prev_n_right = state.n_right;
-
-        match q_side {
-            Side::Left => {
-                left_verts.push((q_v, q_d.coeff.clone()));
-                state.n_left += 1;
-            }
-            Side::Right => {
-                right_verts.push((q_v, q_d.coeff.clone()));
-                state.n_right += 1;
-            }
-        }
-        if let Some(ref lc) = q_d.leading_coeff {
-            state.leading_coeff = Some(lc.clone());
-        }
-        state.terms_used |= q_d.terms;
-
-        expand(graph, coeffs, state, left_verts, right_verts, new_subg, results);
-
-        match q_side {
-            Side::Left => { left_verts.pop(); }
-            Side::Right => { right_verts.pop(); }
-        }
-        state.leading_coeff = prev_leading;
-        state.terms_used = prev_terms;
-        state.n_left = prev_n_left;
-        state.n_right = prev_n_right;
     }
 }
 
-/// Update a delta for `curr_v` when considering adding `new_v` to the biclique.
 pub fn update_delta(
     graph: &ConstrGraph,
-    _coeffs: &CostCoeffs,
-    bk_state: &BronKerboschState,
-    new_v: VertexId,
-    new_d: &Delta,
-    curr_v: VertexId,
-    curr_d: &Delta,
+    biclique: &Biclique,
+    q: VertexId,
+    dq: &Delta,
+    r: VertexId,
+    dr: &Delta,
 ) -> Option<Delta> {
-    let new_side = graph.vertex_side[new_v.0];
-    let curr_side = graph.vertex_side[curr_v.0];
+    let sq = graph.vertex_side[q.0];
+    let sr = graph.vertex_side[r.0];
 
-    let mut updated = Delta {
-        coeff: curr_d.coeff.clone(),
-        leading_coeff: curr_d.leading_coeff.clone(),
-        terms: curr_d.terms,
-        exc_cost: curr_d.exc_cost,
-        saving: 0,
-        excluded: false,
-    };
+    if (dq.terms & dr.terms) != 0 {
+        return None;
+    }
 
-    if new_side == curr_side {
-        if new_d.leading_coeff.is_some() && curr_d.leading_coeff.is_some() {
-            let new_lc = new_d.leading_coeff.as_ref().unwrap();
-            let curr_lc = curr_d.leading_coeff.as_ref().unwrap();
-            if *new_lc == Ratio::from_integer(0) {
-                return None;
+    if sq == sr {
+        if let Some(dq_lc) = &dq.leading_coeff {
+            if let Some(dr_lc) = &dr.leading_coeff {
+                let mut new_dr = dr.clone();
+                new_dr.leading_coeff = None;
+                new_dr.coeff = dr_lc / dq_lc;
+                Some(new_dr)
+            } else {
+                None
             }
-            updated.coeff = curr_lc / new_lc;
-            updated.leading_coeff = None;
+        } else {
+            Some(dr.clone())
         }
     } else {
-        let edges = graph.edges_between(new_v, curr_v);
+        let edges = graph.edges_between(q, r);
         if edges.is_empty() {
             return None;
         }
 
-        let mut best_edge: Option<&EdgeInfo> = None;
-        for edge in &edges {
-            let edge_term = 1u64 << edge.term_idx;
-            let conflict = (edge_term & new_d.terms != 0)
-                || (edge_term & curr_d.terms != 0)
-                || (edge_term & bk_state.terms_used != 0);
-            if conflict {
-                continue;
-            }
-            match best_edge {
-                None => best_edge = Some(edge),
-                Some(prev) if edge.exc_cost < prev.exc_cost => best_edge = Some(edge),
-                _ => {}
-            }
+        let bitmask: u64 = edges.iter()
+            .filter(|e| e.term_idx < 64)
+            .map(|e| 1u64 << e.term_idx)
+            .fold(0u64, |acc, mask| acc | mask);
+        
+        if (bitmask & dq.terms) != 0
+            || (bitmask & dr.terms) != 0
+            || (bitmask & biclique.terms_used) != 0
+        {
+            return None;
         }
 
-        let edge = best_edge?;
+        let mut new_dr = dr.clone();
+        new_dr.terms |= bitmask;
+        
+        let first_edge = &edges[0];
+        new_dr.exc_cost += first_edge.exc_cost as i64;
 
-        let edge_term = 1u64 << edge.term_idx;
-        updated.terms |= edge_term;
-        updated.exc_cost += edge.exc_cost as i64;
+        let total_coeff: Rational = edges.iter()
+            .map(|e| e.coeff.clone())
+            .sum();
 
-        let edge_coeff = &edge.coeff;
-
-        if let Some(ref new_lc) = new_d.leading_coeff {
-            if *new_lc == Ratio::from_integer(0) {
-                return None;
-            }
-            updated.coeff = edge_coeff / new_lc;
-        } else if bk_state.leading_coeff.is_none() {
-            updated.leading_coeff = Some(edge_coeff.clone());
+        if let Some(dq_lc) = &dq.leading_coeff {
+            new_dr.coeff = &total_coeff / dq_lc;
+        } else if biclique.leading_coeff.is_none() {
+            new_dr.leading_coeff = Some(total_coeff);
         } else {
-            let lc = bk_state.leading_coeff.as_ref().unwrap();
-            let expected = lc * &new_d.coeff * &curr_d.coeff;
-            if *edge_coeff != expected {
-                return None;
+            if let Some(bic_lc) = &biclique.leading_coeff {
+                let expected = bic_lc * &dq.coeff * &dr.coeff;
+                if total_coeff != expected {
+                    return None;
+                }
+            }
+        }
+                
+        Some(new_dr)
+    }
+}
+
+pub fn sift(
+    graph: &ConstrGraph,
+    biclique: &Biclique,
+    cand: &[VertexId],
+    subg: &HashMap<VertexId, Delta>,
+    subgq: &HashMap<VertexId, HashMap<VertexId, Delta>>,
+) -> Vec<VertexId> {
+    if biclique.left_verts.is_empty() {
+        return cand.iter()
+            .filter(|q| graph.vertex_side[q.0] == Side::Left)
+            .copied()
+            .collect();
+    }
+
+    let curr: Vec<VertexId> = if biclique.right_verts.is_empty() {
+        cand.iter()
+            .filter(|q| graph.vertex_side[q.0] == Side::Right)
+            .copied()
+            .collect()
+    } else {
+        cand.iter()
+            .filter(|q| subg.get(q).map_or(false, |delta| delta.saving > 0))
+            .copied()
+            .collect()
+    };
+
+    let mut best_f: Vec<VertexId> = Vec::new();
+    let mut max_intersection = 0;
+
+    for &u in subg.keys() {
+        let u_side = graph.vertex_side[u.0];
+
+        if let Some(neighbors) = subgq.get(&u) {
+            let f_u: Vec<VertexId> = neighbors
+                .keys()
+                .filter(|&v| graph.vertex_side[v.0] == u_side)
+                .copied()
+                .collect();
+
+            let intersection_size = f_u.iter().filter(|v| curr.contains(v)).count();
+
+            if intersection_size > max_intersection {
+                max_intersection = intersection_size;
+                best_f = f_u;
             }
         }
     }
 
-    Some(updated)
+    curr.into_iter()
+        .filter(|v| !best_f.contains(v))
+        .collect()
+}
+
+pub fn push(
+    biclique: &mut Biclique,
+    q: VertexId,
+    side: Side,
+    dq: &Delta,
+) {
+    biclique.saving += dq.saving;
+    biclique.terms_used |= dq.terms;
+    match side {
+        Side::Left => biclique.left_verts.push((q, dq.coeff.clone())),
+        Side::Right => biclique.right_verts.push((q, dq.coeff.clone())),
+    };
+    if let Some(dq_lc) = &dq.leading_coeff {
+        biclique.leading_coeff = Some(dq_lc.clone());
+    }
+}
+
+pub fn pop(
+    biclique: &mut Biclique,
+    q: VertexId,
+    side: Side,
+    dq: &Delta,
+) {
+    biclique.saving -= dq.saving;
+    biclique.terms_used ^= dq.terms;
+    match side {
+        Side::Left => biclique.left_verts.pop(),
+        Side::Right => biclique.right_verts.pop(),
+    };
 }
 
 // ---------------------------------------------------------------------------
