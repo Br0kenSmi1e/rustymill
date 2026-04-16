@@ -9,9 +9,9 @@ fn make_abc_term() -> (TensorComputation, Term, Vec<Index>) {
     let mut comp = TensorComputation::new();
     let occ = comp.add_range(10);
     let virt = comp.add_range(100);
-    let _a_tensor = comp.add_tensor(&[occ, occ], vec![]);
-    let _b_tensor = comp.add_tensor(&[occ, virt], vec![]);
-    let _c_tensor = comp.add_tensor(&[virt, virt], vec![]);
+    let _a_tensor = comp.add_tensor(vec![]);
+    let _b_tensor = comp.add_tensor(vec![]);
+    let _c_tensor = comp.add_tensor(vec![]);
 
     let a = IndexId(0);
     let b = IndexId(1);
@@ -94,8 +94,8 @@ fn test_bitmask_size_product() {
 fn test_parenthesize_two_factors() {
     let mut comp = TensorComputation::new();
     let occ = comp.add_range(10);
-    let _a = comp.add_tensor(&[occ, occ], vec![]);
-    let _b = comp.add_tensor(&[occ, occ], vec![]);
+    let _a = comp.add_tensor(vec![]);
+    let _b = comp.add_tensor(vec![]);
 
     let a = IndexId(0);
     let b = IndexId(1);
@@ -160,7 +160,7 @@ fn test_parenthesize_optimal_order() {
 fn test_parenthesize_single_factor() {
     let mut comp = TensorComputation::new();
     let occ = comp.add_range(10);
-    let _a = comp.add_tensor(&[occ], vec![]);
+    let _a = comp.add_tensor(vec![]);
     let a = IndexId(0);
     let ext = vec![Index { id: a, range: occ }];
     let term = Term {
@@ -179,8 +179,8 @@ fn test_parenthesize_single_factor() {
 fn test_extract_optimal_two_factors() {
     let mut comp = TensorComputation::new();
     let occ = comp.add_range(10);
-    let a_tensor = comp.add_tensor(&[occ, occ], vec![]);
-    let b_tensor = comp.add_tensor(&[occ, occ], vec![]);
+    let a_tensor = comp.add_tensor(vec![]);
+    let b_tensor = comp.add_tensor(vec![]);
 
     let a = IndexId(0);
     let b = IndexId(1);
@@ -252,10 +252,10 @@ fn test_parenthesize_four_factors() {
     let mut comp = TensorComputation::new();
     let occ = comp.add_range(10);
     let virt = comp.add_range(100);
-    let _a = comp.add_tensor(&[occ, occ], vec![]);
-    let _b = comp.add_tensor(&[occ, virt], vec![]);
-    let _c = comp.add_tensor(&[virt, virt], vec![]);
-    let _d = comp.add_tensor(&[virt, occ], vec![]);
+    let _a = comp.add_tensor(vec![]);
+    let _b = comp.add_tensor(vec![]);
+    let _c = comp.add_tensor(vec![]);
+    let _d = comp.add_tensor(vec![]);
 
     let a = IndexId(0);
     let b = IndexId(1);

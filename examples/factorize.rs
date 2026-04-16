@@ -1,6 +1,9 @@
+use std::path::Path;
+
 use rustymill::repr::*;
 use rustymill::optimize::greedy_optimize;
 use rustymill::cost::total_cost;
+use rustymill::convert::write_json;
 use num::rational::Ratio;
 
 /// Example: t[a,b] = 4*X[a,c]*U[c,b] + 2*X[a,c]*V[c,b] - 2*Y[a,c]*U[c,b] - Y[a,c]*V[c,b] + Z[a,b]
@@ -10,22 +13,30 @@ use num::rational::Ratio;
 fn main() {
     let mut comp = TensorComputation::new();
 
-    let occ = comp.add_range(10);
+    let o = comp.add_range(10);
 
-    let x = comp.add_tensor(&[occ, occ], vec![]);
-    let y = comp.add_tensor(&[occ, occ], vec![]);
-    let u = comp.add_tensor(&[occ, occ], vec![]);
-    let v = comp.add_tensor(&[occ, occ], vec![]);
-    let t = comp.add_tensor(&[occ, occ], vec![]);
-    let z = comp.add_tensor(&[occ, occ], vec![]);
+    let r = comp.add_tensor(&[o, o], vec![]);
+    let a = comp.add_tensor(&[o, o], vec![]);
+    let b = comp.add_tensor(&[o, o], vec![]);
+    let c = comp.add_tensor(&[o, o], vec![]);
+    let d = comp.add_tensor(&[o, o], vec![]);
+    let e = comp.add_tensor(&[o, o], vec![]);
+    let f = comp.add_tensor(&[o, o], vec![]);
+    let p = comp.add_tensor(&[o, o], vec![]);
+    let q = comp.add_tensor(&[o, o], vec![]);
+    let x = comp.add_tensor(&[o, o], vec![]);
+    let y = comp.add_tensor(&[o, o], vec![]);
 
-    let a = IndexId(0);
-    let b = IndexId(1);
-    let c = IndexId(2);
+    let i = IndexId(0);
+    let j = IndexId(1);
+    let k = IndexId(2);
+    let l = IndexId(3);
+    let m = IndexId(4);
+    let n = IndexId(5);
 
     let ext = vec![
-        Index { id: a, range: occ },
-        Index { id: b, range: occ },
+        Index { id: i, range: o },
+        Index { id: j, range: o },
     ];
 
     let make_term = |coeff: i64, left: TensorId, right: TensorId| -> Term {
@@ -43,6 +54,10 @@ fn main() {
         t,
         ext,
         vec![
+            Term {
+                coeff: Ratio::from_integer(1),
+                sum_indices: vec![Index {id: k, range: o}, Index]
+            }
             make_term(4, x, u),   //  4 * X[a,c] * U[c,b]
             make_term(2, x, v),   //  2 * X[a,c] * V[c,b]
             make_term(-2, y, u),  // -2 * Y[a,c] * U[c,b]
@@ -67,4 +82,6 @@ fn main() {
     let cost_after = total_cost(&comp);
     println!("Cost: {cost_after}");
     println!("Saving: {}", cost_before as i64 - cost_after as i64);
+
+    write_json(&comp, Path::new("factorized.json")).unwrap();
 }

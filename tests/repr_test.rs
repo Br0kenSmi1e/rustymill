@@ -103,7 +103,6 @@ fn test_index_creation() {
 fn test_tensor_info_with_symmetry() {
     let t = TensorInfo {
         id: TensorId(0),
-        slots: vec![RangeId(0), RangeId(0)],
         symmetry: vec![SymGenerator {
             perm: vec![1, 0],
             action: SymAction::Negate,
@@ -188,10 +187,9 @@ fn test_add_tensor() {
     let mut comp = TensorComputation::new();
     let occ = comp.add_range(10);
     let virt = comp.add_range(100);
-    let t = comp.add_tensor(&[occ, virt], vec![]);
+    let t = comp.add_tensor(vec![]);
     assert_eq!(t, TensorId(0));
     assert_eq!(comp.tensors().len(), 1);
-    assert_eq!(comp.tensors()[0].slots, vec![occ, virt]);
 }
 
 #[test]
@@ -199,7 +197,7 @@ fn test_add_tensor_with_symmetry() {
     let mut comp = TensorComputation::new();
     let occ = comp.add_range(10);
     let sym = SymGenerator { perm: vec![1, 0], action: SymAction::Negate };
-    let v = comp.add_tensor(&[occ, occ], vec![sym.clone()]);
+    let v = comp.add_tensor(vec![sym.clone()]);
     assert_eq!(comp.tensors()[v.0 as usize].symmetry, vec![sym]);
 }
 
@@ -208,9 +206,9 @@ fn test_add_definition() {
     let mut comp = TensorComputation::new();
     let occ = comp.add_range(10);
     let virt = comp.add_range(100);
-    let a = comp.add_tensor(&[occ, virt], vec![]);
-    let b = comp.add_tensor(&[virt, occ], vec![]);
-    let t = comp.add_tensor(&[occ, occ], vec![]);
+    let a = comp.add_tensor(vec![]);
+    let b = comp.add_tensor(vec![]);
+    let t = comp.add_tensor(vec![]);
 
     let i = IndexId(0);
     let j = IndexId(1);
@@ -244,11 +242,11 @@ fn test_full_computation() {
     let occ = comp.add_range(10);
     let virt = comp.add_range(100);
 
-    let a_tensor = comp.add_tensor(&[occ, occ], vec![]);
-    let b_tensor = comp.add_tensor(&[occ, occ], vec![]);
-    let c_tensor = comp.add_tensor(&[occ, virt, virt], vec![]);
-    let d_tensor = comp.add_tensor(&[virt, virt, occ], vec![]);
-    let r_tensor = comp.add_tensor(&[occ, occ], vec![]);
+    let a_tensor = comp.add_tensor(vec![]);
+    let b_tensor = comp.add_tensor(vec![]);
+    let c_tensor = comp.add_tensor(vec![]);
+    let d_tensor = comp.add_tensor(vec![]);
+    let r_tensor = comp.add_tensor(vec![]);
 
     let a = IndexId(0);
     let b = IndexId(1);

@@ -9,19 +9,21 @@ import tempfile
 
 # Add gristmill to path
 sys.path.insert(0, os.path.expanduser('~/pycode/gristmill'))
-sys.path.insert(0, os.path.expanduser('~/pycode/drudge'))
+# sys.path.insert(0, os.path.expanduser('~/pycode/drudge'))
 
 from sympy import IndexedBase, Symbol, Rational
 from drudge import Range
 from dummy_spark import SparkContext  # or use a real SparkContext
 
 # Try to set up a minimal drudge
-try:
-    from pyspark import SparkContext
-    ctx = SparkContext('local[1]', 'test')
-except Exception:
-    # Fallback: try without spark
-    ctx = None
+# try:
+#     from pyspark import SparkContext
+#     ctx = SparkContext('local[1]', 'test')
+# except Exception:
+#     # Fallback: try without spark
+#     ctx = None
+
+ctx = SparkContext()
 
 from drudge import Drudge
 

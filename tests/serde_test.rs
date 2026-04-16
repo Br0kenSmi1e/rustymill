@@ -7,9 +7,9 @@ fn build_sample_computation() -> TensorComputation {
     let virt = comp.add_range(100);
 
     let sym = SymGenerator { perm: vec![1, 0], action: SymAction::Negate };
-    let v = comp.add_tensor(&[occ, occ, virt, virt], vec![sym]);
-    let t = comp.add_tensor(&[occ, occ], vec![]);
-    let r = comp.add_tensor(&[occ, occ], vec![]);
+    let v = comp.add_tensor(vec![sym]);
+    let t = comp.add_tensor(vec![]);
+    let r = comp.add_tensor(vec![]);
 
     let a = IndexId(0);
     let b = IndexId(1);

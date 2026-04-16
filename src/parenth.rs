@@ -338,8 +338,7 @@ pub fn extract_optimal(
         let right_indices = collect_operand_indices(right_interm, &sum_index_map, &ext_index_map);
 
         // Create new intermediate tensor
-        let slots: Vec<RangeId> = def_ext_indices.iter().map(|idx| idx.range).collect();
-        let new_tensor = comp.add_tensor(&slots, vec![]);
+        let new_tensor = comp.add_tensor(vec![]);
 
         let full_mask = (1u64 << result.info.n_factors) - 1;
         let new_term = Term {

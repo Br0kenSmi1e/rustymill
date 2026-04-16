@@ -17,9 +17,8 @@ pub fn apply_factorization(
     fact: &Factorization,
 ) {
     // Register intermediate tensors
-    for interm in &fact.intermediates {
-        let slots: Vec<_> = interm.ext_indices.iter().map(|idx| idx.range).collect();
-        comp.add_tensor(&slots, vec![]);
+    for _interm in &fact.intermediates {
+        comp.add_tensor(vec![]);
     }
 
     // Modify the target definition: remove consumed terms, add replacement

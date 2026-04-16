@@ -5,9 +5,9 @@ use num::rational::Ratio;
 fn simple_contraction() -> TensorComputation {
     let mut comp = TensorComputation::new();
     let occ = comp.add_range(10);
-    let _a = comp.add_tensor(&[occ, occ], vec![]);
-    let _b = comp.add_tensor(&[occ, occ], vec![]);
-    let t = comp.add_tensor(&[occ, occ], vec![]);
+    let _a = comp.add_tensor(vec![]);
+    let _b = comp.add_tensor(vec![]);
+    let t = comp.add_tensor(vec![]);
     let a = IndexId(0);
     let b = IndexId(1);
     let c = IndexId(2);
@@ -37,8 +37,8 @@ fn test_def_cost_simple_contraction() {
 fn test_def_cost_no_summation() {
     let mut comp = TensorComputation::new();
     let occ = comp.add_range(10);
-    let _a = comp.add_tensor(&[occ, occ], vec![]);
-    let t = comp.add_tensor(&[occ, occ], vec![]);
+    let _a = comp.add_tensor(vec![]);
+    let t = comp.add_tensor(vec![]);
     let a = IndexId(0);
     let b = IndexId(1);
     comp.add_definition(
@@ -59,11 +59,11 @@ fn test_def_cost_two_terms_different_sums() {
     let mut comp = TensorComputation::new();
     let occ = comp.add_range(10);
     let virt = comp.add_range(100);
-    let _a = comp.add_tensor(&[occ, occ], vec![]);
-    let _b = comp.add_tensor(&[occ, occ], vec![]);
-    let _c = comp.add_tensor(&[occ, virt, virt], vec![]);
-    let _d = comp.add_tensor(&[virt, virt, occ], vec![]);
-    let t = comp.add_tensor(&[occ, occ], vec![]);
+    let _a = comp.add_tensor(vec![]);
+    let _b = comp.add_tensor(vec![]);
+    let _c = comp.add_tensor(vec![]);
+    let _d = comp.add_tensor(vec![]);
+    let t = comp.add_tensor(vec![]);
     let a = IndexId(0);
     let b = IndexId(1);
     let c = IndexId(2);
@@ -102,10 +102,10 @@ fn test_def_cost_two_terms_different_sums() {
 fn test_total_cost_multiple_definitions() {
     let mut comp = TensorComputation::new();
     let occ = comp.add_range(10);
-    let _a = comp.add_tensor(&[occ, occ], vec![]);
-    let _b = comp.add_tensor(&[occ, occ], vec![]);
-    let t1 = comp.add_tensor(&[occ, occ], vec![]);
-    let t2 = comp.add_tensor(&[occ, occ], vec![]);
+    let _a = comp.add_tensor(vec![]);
+    let _b = comp.add_tensor(vec![]);
+    let t1 = comp.add_tensor(vec![]);
+    let t2 = comp.add_tensor(vec![]);
     let a = IndexId(0);
     let b = IndexId(1);
     let c = IndexId(2);
@@ -127,9 +127,9 @@ fn test_total_cost_multiple_definitions() {
 fn test_def_cost_scalar_output() {
     let mut comp = TensorComputation::new();
     let occ = comp.add_range(10);
-    let _a = comp.add_tensor(&[occ, occ], vec![]);
-    let _b = comp.add_tensor(&[occ, occ], vec![]);
-    let e = comp.add_tensor(&[], vec![]);
+    let _a = comp.add_tensor(vec![]);
+    let _b = comp.add_tensor(vec![]);
+    let e = comp.add_tensor(vec![]);
     let a = IndexId(0);
     let b = IndexId(1);
     comp.add_definition(
