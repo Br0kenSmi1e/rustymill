@@ -123,7 +123,9 @@ pub fn search<S: MctsState>(root: S, iterations: u32, exploration: f64) -> Vec<S
     }
 
     // Extract best path: follow most-visited child at each level
-    extract_best_path(&arena)
+    let best_path = extract_best_path(&arena);
+    print_best_path_branching(&arena, 100);
+    best_path
 }
 
 impl<S: MctsState> MctsNode<S> {
@@ -199,4 +201,46 @@ fn extract_best_path<S: MctsState>(arena: &[MctsNode<S>]) -> Vec<S::Action> {
     }
 
     actions
+}
+
+pub fn print_best_path_branching<S: MctsState>(arena: &[MctsNode<S>], max_depth: usize) {
+    let mut current = 0usize;
+    for depth in 0..=max_depth {
+        if current >= arena.len() { break; }
+        
+        let node = &arena[current];
+        let q_val = if node.visits > 0 { node.total_reward / node.visits as f64 } else { 0.0 };
+        
+        let branch_info = if node.expanded { 
+            format!("{}", node.actions.len()) 
+        } else { 
+            "?".to_string() 
+        };
+
+        eprintln!("Depth {:>2}: visits={:<5} avgQ={:<7.3} | Actions: {}", depth, node.visits, q_val, branch_info);
+
+        let mut best_child_idx: Option<usize> = None;
+        let mut best_visits = 0u32;
+
+        for child_opt in &node.children {
+            if let Some(idx) = child_opt {
+                let c_visits = arena[*idx].visits;
+                if c_visits > best_visits {
+                    best_visits = c_visits;
+                    best_child_idx = Some(*idx);
+                }
+            }
+        }
+
+        match best_child_idx {
+            Some(child_idx) => {
+                eprintln!("  └─ (most visited) →");
+                current = child_idx;
+            }
+            None => {
+                eprintln!("  └─ [Leaf / Terminal / Unexplored]");
+                break;
+            }
+        }
+    }
 }
