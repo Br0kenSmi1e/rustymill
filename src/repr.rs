@@ -111,7 +111,7 @@ impl fmt::Display for Factor {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Term {
     pub coeff: Rational,
     pub sum_indices: Vec<Index>,
