@@ -62,7 +62,7 @@ fn next_decision(
 
         let mut profitable: Vec<_> = facts.into_iter().filter(|f| f.saving > 0).collect();
         if !profitable.is_empty() {
-            profitable.sort_by(|a, b| b.saving.cmp(&a.saving));
+            profitable.sort_by(|a, b| b.saving.cmp(&a.saving).then(a.terms_consumed.cmp(&b.terms_consumed)));
             return Some((i, profitable));
         }
     }

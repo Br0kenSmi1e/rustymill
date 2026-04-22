@@ -51,7 +51,8 @@ fn main() {
     if !no_opt {
         let n = if let Some(iters) = mcts_iters {
             eprintln!("Running MCTS with {} iterations...", iters);
-            mcts_optimize(&mut comp, iters, std::f64::consts::SQRT_2)
+            mcts_optimize(&mut comp, iters, std::f64::consts::SQRT_2);
+            greedy_optimize(&mut comp)
         } else {
             greedy_optimize(&mut comp)
         };
