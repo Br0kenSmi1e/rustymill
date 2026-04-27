@@ -54,23 +54,11 @@ fn main() {
         cost_before
     );
 
-    if !no_opt {
-        let n = if let Some(iters) = mcts_iters {
-            eprintln!("Running MCTS with {} iterations...", iters);
-            mcts_optimize(&mut comp, iters, std::f64::consts::SQRT_2);
-            greedy_optimize(&mut comp)
-        } else {
-            greedy_optimize(&mut comp)
-        };
-
-        let cost_after = total_cost(&comp);
-        eprintln!(
-            "Output: {} definitions, cost = {} (saving = {}, {} factorizations applied)",
-            comp.definitions().len(),
-            cost_after,
-            cost_before as i64 - cost_after as i64,
-            n,
-        );
+    let n = if let Some(iters) = mcts_iters {
+        eprintln!("Running MCTS with {} iterations...", iters);
+        let n_mcts = mcts_optimize(&mut comp, iters, 1.414);
+        let n_rollout = greedy_optimize(&mut comp);
+        n_mcts + n_rollout
     } else {
         eprintln!("Running greedy optimization...");
         greedy_optimize(&mut comp)
