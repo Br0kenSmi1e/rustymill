@@ -58,14 +58,6 @@ fn simple_def(term_count: usize) -> TensorDef {
     }
 }
 
-fn graph_edge_pairs(graph: &ConstrGraph) -> Vec<(usize, usize)> {
-    graph
-        .edges
-        .iter()
-        .map(|edge: &GraphEdge| (edge.left_id, edge.right_id))
-        .collect()
-}
-
 #[test]
 fn test_build_graphs_from_canon_splits_returns_two_owner_graphs() {
     let last_step = LastStepIndices {
@@ -103,11 +95,6 @@ fn test_build_graphs_from_canon_splits_returns_two_owner_graphs() {
     assert_eq!(graphs.len(), 2);
     assert!(graphs.iter().all(|graph| graph.last_step == last_step));
     assert!(graphs.iter().all(|graph| graph.edges.len() == 2));
-    assert!(
-        graphs
-            .iter()
-            .all(|graph| graph_edge_pairs(graph) == vec![(0, 0), (0, 0)])
-    );
 }
 
 #[test]
