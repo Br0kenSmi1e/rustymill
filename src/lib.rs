@@ -1,7 +1,9 @@
 pub mod repr;
 pub mod cost;
 pub mod canon;
+pub mod rl_canon;
 pub mod parenth;
+pub mod rl_parenth;
 pub mod constr;
 pub mod mcts;
 pub mod optimize;
