@@ -183,6 +183,24 @@ fn graph_matches_expected(graph: &ConstrGraph, expected: &ExpectedGraph) -> bool
         && graph_edges(graph) == expected.edges
 }
 
+fn find_graph_by_nodes<'a>(
+    graphs: &'a [ConstrGraph],
+    left_nodes: &[Term],
+    right_nodes: &[Term],
+) -> &'a ConstrGraph {
+    graphs
+        .iter()
+        .find(|graph| graph.left_nodes == left_nodes && graph.right_nodes == right_nodes)
+        .expect("expected graph orientation was not returned")
+}
+
+fn find_edge<'a>(graph: &'a ConstrGraph, left_id: usize, right_id: usize) -> &'a GraphEdge {
+    graph.edges
+        .iter()
+        .find(|edge| edge.left_id == left_id && edge.right_id == right_id)
+        .expect("expected edge was not returned")
+}
+
 fn assert_graphs_match_unordered(
     graphs: &[ConstrGraph],
     last_step: &LastStepIndices,
@@ -271,14 +289,26 @@ fn test_build_graphs_from_canon_splits_merges_distinct_terms_on_one_edge() {
         ],
     );
 
-    let shared_edge = graphs[0]
-        .edges
-        .iter()
-        .find(|edge| edge.left_id == 0 && edge.right_id == 0)
-        .unwrap();
+    assert_eq!(graphs.len(), 2);
 
-    assert_eq!(shared_edge.coeff, Ratio::from_integer(5));
-    assert_eq!(shared_edge.terms_used, 0b11);
+    let left_owner_graph = find_graph_by_nodes(
+        &graphs,
+        &[left_shared.clone(), left_other.clone()],
+        std::slice::from_ref(&right_shared),
+    );
+    let right_owner_graph = find_graph_by_nodes(
+        &graphs,
+        std::slice::from_ref(&right_shared),
+        &[left_shared.clone(), left_other.clone()],
+    );
+
+    let left_owner_shared_edge = find_edge(left_owner_graph, 0, 0);
+    assert_eq!(left_owner_shared_edge.coeff, Ratio::from_integer(5));
+    assert_eq!(left_owner_shared_edge.terms_used, 0b11);
+
+    let right_owner_shared_edge = find_edge(right_owner_graph, 0, 0);
+    assert_eq!(right_owner_shared_edge.coeff, Ratio::from_integer(5));
+    assert_eq!(right_owner_shared_edge.terms_used, 0b11);
 }
 
 #[test]
@@ -322,12 +352,24 @@ fn test_build_graphs_from_canon_splits_ignores_duplicate_same_term_contribution(
         &[vec![duplicate.clone(), duplicate], vec![other]],
     );
 
-    let shared_edge = graphs[0]
-        .edges
-        .iter()
-        .find(|edge| edge.left_id == 0 && edge.right_id == 0)
-        .unwrap();
+    assert_eq!(graphs.len(), 2);
 
-    assert_eq!(shared_edge.coeff, Ratio::from_integer(7));
-    assert_eq!(shared_edge.terms_used, 0b01);
+    let left_owner_graph = find_graph_by_nodes(
+        &graphs,
+        &[left_shared.clone(), left_other.clone()],
+        std::slice::from_ref(&right_shared),
+    );
+    let right_owner_graph = find_graph_by_nodes(
+        &graphs,
+        std::slice::from_ref(&right_shared),
+        &[left_shared, left_other],
+    );
+
+    let left_owner_shared_edge = find_edge(left_owner_graph, 0, 0);
+    assert_eq!(left_owner_shared_edge.coeff, Ratio::from_integer(7));
+    assert_eq!(left_owner_shared_edge.terms_used, 0b01);
+
+    let right_owner_shared_edge = find_edge(right_owner_graph, 0, 0);
+    assert_eq!(right_owner_shared_edge.coeff, Ratio::from_integer(7));
+    assert_eq!(right_owner_shared_edge.terms_used, 0b01);
 }
