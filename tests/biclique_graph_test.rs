@@ -221,3 +221,113 @@ fn test_build_graphs_from_canon_splits_keeps_left_and_right_nodes_independent() 
             .all(|graph| graph.left_nodes[0] != graph.right_nodes[0])
     );
 }
+
+#[test]
+fn test_build_graphs_from_canon_splits_merges_distinct_terms_on_one_edge() {
+    let last_step = LastStepIndices {
+        left_ext: 0b01,
+        right_ext: 0b10,
+        sums: vec![RangeId(0)],
+    };
+
+    let left_shared = term(1, 1, &[index(2, 0)], vec![factor(1, &[0, 2])]);
+    let left_other = term(1, 1, &[index(2, 0)], vec![factor(2, &[0, 2])]);
+    let right_shared = term(1, 1, &[index(2, 0)], vec![factor(3, &[2, 1])]);
+
+    let def = TensorDef {
+        base: TensorId(0),
+        ext_indices: vec![index(0, 0), index(1, 0)],
+        terms: vec![
+            term(2, 1, &[], vec![factor(99, &[0, 1])]),
+            term(3, 1, &[], vec![factor(99, &[0, 1])]),
+            term(5, 1, &[], vec![factor(99, &[0, 1])]),
+        ],
+    };
+
+    let graphs = build_graphs_from_canon_splits(
+        &def,
+        &[
+            vec![pair(
+                left_shared.clone(),
+                right_shared.clone(),
+                right_shared.clone(),
+                left_shared.clone(),
+                &last_step,
+            )],
+            vec![pair(
+                left_shared.clone(),
+                right_shared.clone(),
+                right_shared.clone(),
+                left_shared.clone(),
+                &last_step,
+            )],
+            vec![pair(
+                left_other.clone(),
+                right_shared.clone(),
+                right_shared.clone(),
+                left_other.clone(),
+                &last_step,
+            )],
+        ],
+    );
+
+    let shared_edge = graphs[0]
+        .edges
+        .iter()
+        .find(|edge| edge.left_id == 0 && edge.right_id == 0)
+        .unwrap();
+
+    assert_eq!(shared_edge.coeff, Ratio::from_integer(5));
+    assert_eq!(shared_edge.terms_used, 0b11);
+}
+
+#[test]
+fn test_build_graphs_from_canon_splits_ignores_duplicate_same_term_contribution() {
+    let last_step = LastStepIndices {
+        left_ext: 0b01,
+        right_ext: 0b10,
+        sums: vec![RangeId(0)],
+    };
+
+    let left_shared = term(1, 1, &[index(2, 0)], vec![factor(1, &[0, 2])]);
+    let left_other = term(1, 1, &[index(2, 0)], vec![factor(2, &[0, 2])]);
+    let right_shared = term(1, 1, &[index(2, 0)], vec![factor(3, &[2, 1])]);
+
+    let def = TensorDef {
+        base: TensorId(0),
+        ext_indices: vec![index(0, 0), index(1, 0)],
+        terms: vec![
+            term(7, 1, &[], vec![factor(99, &[0, 1])]),
+            term(5, 1, &[], vec![factor(99, &[0, 1])]),
+        ],
+    };
+
+    let duplicate = pair(
+        left_shared.clone(),
+        right_shared.clone(),
+        right_shared.clone(),
+        left_shared.clone(),
+        &last_step,
+    );
+    let other = pair(
+        left_other.clone(),
+        right_shared.clone(),
+        right_shared.clone(),
+        left_other.clone(),
+        &last_step,
+    );
+
+    let graphs = build_graphs_from_canon_splits(
+        &def,
+        &[vec![duplicate.clone(), duplicate], vec![other]],
+    );
+
+    let shared_edge = graphs[0]
+        .edges
+        .iter()
+        .find(|edge| edge.left_id == 0 && edge.right_id == 0)
+        .unwrap();
+
+    assert_eq!(shared_edge.coeff, Ratio::from_integer(7));
+    assert_eq!(shared_edge.terms_used, 0b01);
+}
