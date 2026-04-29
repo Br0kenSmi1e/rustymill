@@ -221,11 +221,8 @@ fn assert_graphs_match_unordered(
 
 #[test]
 fn test_crate_surface_exposes_biclique_graph_builder_api() {
-    let last_step = LastStepIndices {
-        left_ext: 0b01,
-        right_ext: 0b10,
-        sums: vec![RangeId(0)],
-    };
+    let build_fn: fn(&TensorDef, &[Vec<CanonSplitPair>]) -> Vec<ConstrGraph> =
+        build_graphs_from_canon_splits;
 
     let edge = GraphEdge {
         left_id: 0,
@@ -234,15 +231,18 @@ fn test_crate_surface_exposes_biclique_graph_builder_api() {
         terms_used: 0b101,
     };
     let graph = ConstrGraph {
-        last_step: last_step.clone(),
+        last_step: LastStepIndices {
+            left_ext: 0b01,
+            right_ext: 0b10,
+            sums: vec![RangeId(0)],
+        },
         left_nodes: vec![],
         right_nodes: vec![],
         edges: vec![edge.clone()],
     };
 
-    assert_eq!(graph.last_step, last_step);
     assert_eq!(graph.edges, vec![edge]);
-    assert!(build_graphs_from_canon_splits(&simple_def(0), &[]).is_empty());
+    assert!(build_fn(&simple_def(0), &[]).is_empty());
 }
 
 #[test]
