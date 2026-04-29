@@ -220,6 +220,32 @@ fn assert_graphs_match_unordered(
 }
 
 #[test]
+fn test_crate_surface_exposes_biclique_graph_builder_api() {
+    let last_step = LastStepIndices {
+        left_ext: 0b01,
+        right_ext: 0b10,
+        sums: vec![RangeId(0)],
+    };
+
+    let edge = GraphEdge {
+        left_id: 0,
+        right_id: 1,
+        coeff: Ratio::from_integer(3),
+        terms_used: 0b101,
+    };
+    let graph = ConstrGraph {
+        last_step: last_step.clone(),
+        left_nodes: vec![],
+        right_nodes: vec![],
+        edges: vec![edge.clone()],
+    };
+
+    assert_eq!(graph.last_step, last_step);
+    assert_eq!(graph.edges, vec![edge]);
+    assert!(build_graphs_from_canon_splits(&simple_def(0), &[]).is_empty());
+}
+
+#[test]
 fn test_build_graphs_from_canon_splits_returns_two_owner_graphs() {
     let fixture = fixture_two_owner_graphs();
     let graphs = build_graphs_from_canon_splits(&fixture.def, &fixture.canon_splits);
