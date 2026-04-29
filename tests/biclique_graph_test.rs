@@ -9,16 +9,16 @@ struct TwoOwnerGraphsFixture {
     def: TensorDef,
     last_step: LastStepIndices,
     canon_splits: Vec<Vec<CanonSplitPair>>,
-    expected_owner_left_terms: Vec<Term>,
-    expected_owner_right_terms: Vec<Term>,
+    expected_left_nodes: Vec<Vec<Term>>,
+    expected_right_nodes: Vec<Vec<Term>>,
 }
 
 struct IndependentNodesFixture {
     def: TensorDef,
     last_step: LastStepIndices,
     canon_splits: Vec<Vec<CanonSplitPair>>,
-    expected_left_nodes: Vec<Term>,
-    expected_right_nodes: Vec<Term>,
+    expected_left_nodes: Vec<Vec<Term>>,
+    expected_right_nodes: Vec<Vec<Term>>,
 }
 
 fn factor(tensor: u32, indices: &[u32]) -> Factor {
@@ -106,8 +106,14 @@ fn fixture_two_owner_graphs() -> TwoOwnerGraphsFixture {
         def: simple_def(2),
         last_step,
         canon_splits: vec![vec![owner_left_0], vec![owner_left_1]],
-        expected_owner_left_terms: vec![left_a, left_b],
-        expected_owner_right_terms: vec![right_a, right_b],
+        expected_left_nodes: vec![
+            vec![left_a.clone(), left_b.clone()],
+            vec![right_a.clone(), right_b.clone()],
+        ],
+        expected_right_nodes: vec![
+            vec![right_a, right_b],
+            vec![left_a, left_b],
+        ],
     }
 }
 
@@ -140,8 +146,11 @@ fn fixture_independent_nodes() -> IndependentNodesFixture {
                 &last_step,
             )],
         ],
-        expected_left_nodes: vec![same.clone(), other.clone()],
-        expected_right_nodes: vec![other, same],
+        expected_left_nodes: vec![
+            vec![same.clone(), other.clone()],
+            vec![other.clone(), same.clone()],
+        ],
+        expected_right_nodes: vec![vec![other.clone(), same.clone()], vec![same, other]],
     }
 }
 
@@ -161,12 +170,12 @@ fn test_build_graphs_from_canon_splits_returns_two_owner_graphs() {
 
     assert_eq!(graphs.len(), 2);
     assert!(graphs.iter().all(|graph| graph.last_step == fixture.last_step));
-    assert_eq!(graphs[0].left_nodes, vec![fixture.expected_owner_left_terms[0].clone()]);
-    assert_eq!(graphs[0].right_nodes, vec![fixture.expected_owner_right_terms[0].clone()]);
-    assert_eq!(graphs[1].left_nodes, vec![fixture.expected_owner_left_terms[1].clone()]);
-    assert_eq!(graphs[1].right_nodes, vec![fixture.expected_owner_right_terms[1].clone()]);
-    assert_edges_match(&graphs[0], &[(0, 0), (0, 0)]);
-    assert_edges_match(&graphs[1], &[(0, 0), (0, 0)]);
+    assert_eq!(graphs[0].left_nodes, fixture.expected_left_nodes[0].clone());
+    assert_eq!(graphs[0].right_nodes, fixture.expected_right_nodes[0].clone());
+    assert_eq!(graphs[1].left_nodes, fixture.expected_left_nodes[1].clone());
+    assert_eq!(graphs[1].right_nodes, fixture.expected_right_nodes[1].clone());
+    assert_edges_match(&graphs[0], &[(0, 0), (1, 1)]);
+    assert_edges_match(&graphs[1], &[(0, 0), (1, 1)]);
 }
 
 #[test]
@@ -176,12 +185,12 @@ fn test_build_graphs_from_canon_splits_keeps_left_and_right_nodes_independent() 
 
     assert_eq!(graphs.len(), 2);
     assert!(graphs.iter().all(|graph| graph.last_step == fixture.last_step));
-    assert_eq!(graphs[0].left_nodes, vec![fixture.expected_left_nodes[0].clone()]);
-    assert_eq!(graphs[0].right_nodes, vec![fixture.expected_right_nodes[0].clone()]);
-    assert_eq!(graphs[1].left_nodes, vec![fixture.expected_left_nodes[1].clone()]);
-    assert_eq!(graphs[1].right_nodes, vec![fixture.expected_right_nodes[1].clone()]);
+    assert_eq!(graphs[0].left_nodes, fixture.expected_left_nodes[0].clone());
+    assert_eq!(graphs[0].right_nodes, fixture.expected_right_nodes[0].clone());
+    assert_eq!(graphs[1].left_nodes, fixture.expected_left_nodes[1].clone());
+    assert_eq!(graphs[1].right_nodes, fixture.expected_right_nodes[1].clone());
     assert_ne!(graphs[0].left_nodes[0], graphs[0].right_nodes[0]);
     assert_ne!(graphs[1].left_nodes[0], graphs[1].right_nodes[0]);
-    assert_edges_match(&graphs[0], &[(0, 0)]);
-    assert_edges_match(&graphs[1], &[(0, 0)]);
+    assert_edges_match(&graphs[0], &[(0, 0), (1, 1)]);
+    assert_edges_match(&graphs[1], &[(0, 0), (1, 1)]);
 }
