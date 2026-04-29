@@ -67,10 +67,12 @@ pub fn build_graphs_from_canon_splits(
         }
     }
 
-    finalize_graphs(left_buckets)
+    let mut graphs: Vec<ConstrGraph> = finalize_graphs(left_buckets)
         .into_iter()
         .chain(finalize_graphs(right_buckets))
-        .collect()
+        .collect();
+    sort_graphs_by_last_step(&mut graphs);
+    graphs
 }
 
 fn ensure_left_node(graph: &mut PendingGraph, term: &Term) -> usize {
@@ -129,7 +131,7 @@ fn merge_edge(edge: &mut GraphEdge, term_idx: usize, term_coeff: &Rational) {
 }
 
 fn finalize_graphs(buckets: HashMap<LastStepIndices, PendingGraph>) -> Vec<ConstrGraph> {
-    let mut graphs: Vec<ConstrGraph> = buckets
+    buckets
         .into_iter()
         .filter_map(|(last_step, pending)| {
             if pending.edges.len() < 2 {
@@ -143,8 +145,10 @@ fn finalize_graphs(buckets: HashMap<LastStepIndices, PendingGraph>) -> Vec<Const
                 })
             }
         })
-        .collect();
+        .collect()
+}
 
+fn sort_graphs_by_last_step(graphs: &mut [ConstrGraph]) {
     graphs.sort_by(|a, b| {
         a.last_step
             .left_ext
@@ -152,6 +156,4 @@ fn finalize_graphs(buckets: HashMap<LastStepIndices, PendingGraph>) -> Vec<Const
             .then(a.last_step.right_ext.cmp(&b.last_step.right_ext))
             .then(a.last_step.sums.cmp(&b.last_step.sums))
     });
-
-    graphs
 }
