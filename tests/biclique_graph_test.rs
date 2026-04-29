@@ -373,3 +373,125 @@ fn test_build_graphs_from_canon_splits_ignores_duplicate_same_term_contribution(
     assert_eq!(right_owner_shared_edge.coeff, Ratio::from_integer(7));
     assert_eq!(right_owner_shared_edge.terms_used, 0b01);
 }
+
+#[test]
+fn test_build_graphs_from_canon_splits_drops_zero_coeff_edges() {
+    let last_step = LastStepIndices {
+        left_ext: 0b01,
+        right_ext: 0b10,
+        sums: vec![RangeId(0)],
+    };
+
+    let left_shared = term(1, 1, &[index(2, 0)], vec![factor(1, &[0, 2])]);
+    let left_other = term(1, 1, &[index(2, 0)], vec![factor(2, &[0, 2])]);
+    let left_third = term(1, 1, &[index(2, 0)], vec![factor(4, &[0, 2])]);
+    let right_shared = term(1, 1, &[index(2, 0)], vec![factor(3, &[2, 1])]);
+    let right_other = term(1, 1, &[index(2, 0)], vec![factor(5, &[2, 1])]);
+
+    let def = TensorDef {
+        base: TensorId(0),
+        ext_indices: vec![index(0, 0), index(1, 0)],
+        terms: vec![
+            term(1, 1, &[], vec![factor(99, &[0, 1])]),
+            term(-1, 1, &[], vec![factor(99, &[0, 1])]),
+            term(5, 1, &[], vec![factor(99, &[0, 1])]),
+            term(7, 1, &[], vec![factor(99, &[0, 1])]),
+        ],
+    };
+
+    let graphs = build_graphs_from_canon_splits(
+        &def,
+        &[
+            vec![pair(
+                left_shared.clone(),
+                right_shared.clone(),
+                right_shared.clone(),
+                left_shared.clone(),
+                &last_step,
+            )],
+            vec![pair(
+                left_shared.clone(),
+                right_shared.clone(),
+                right_shared.clone(),
+                left_shared.clone(),
+                &last_step,
+            )],
+            vec![pair(
+                left_other.clone(),
+                right_shared.clone(),
+                right_shared.clone(),
+                left_other.clone(),
+                &last_step,
+            )],
+            vec![pair(
+                left_third.clone(),
+                right_other.clone(),
+                right_other.clone(),
+                left_third.clone(),
+                &last_step,
+            )],
+        ],
+    );
+
+    assert_eq!(graphs.len(), 2);
+
+    let left_owner_graph = find_graph_by_nodes(
+        &graphs,
+        &[left_shared.clone(), left_other.clone(), left_third.clone()],
+        &[right_shared.clone(), right_other.clone()],
+    );
+    let right_owner_graph = find_graph_by_nodes(
+        &graphs,
+        &[right_shared.clone(), right_other.clone()],
+        &[left_shared.clone(), left_other.clone(), left_third.clone()],
+    );
+
+    assert_eq!(left_owner_graph.edges.len(), 2);
+    assert_eq!(find_edge(left_owner_graph, 1, 0).coeff, Ratio::from_integer(5));
+    assert_eq!(find_edge(left_owner_graph, 1, 0).terms_used, 0b100);
+    assert_eq!(find_edge(left_owner_graph, 2, 1).coeff, Ratio::from_integer(7));
+    assert_eq!(find_edge(left_owner_graph, 2, 1).terms_used, 0b1000);
+    assert!(
+        left_owner_graph
+            .edges
+            .iter()
+            .all(|edge| edge.coeff != Ratio::from_integer(0))
+    );
+
+    assert_eq!(right_owner_graph.edges.len(), 2);
+    assert_eq!(find_edge(right_owner_graph, 0, 1).coeff, Ratio::from_integer(5));
+    assert_eq!(find_edge(right_owner_graph, 0, 1).terms_used, 0b100);
+    assert_eq!(find_edge(right_owner_graph, 1, 2).coeff, Ratio::from_integer(7));
+    assert_eq!(find_edge(right_owner_graph, 1, 2).terms_used, 0b1000);
+    assert!(
+        right_owner_graph
+            .edges
+            .iter()
+            .all(|edge| edge.coeff != Ratio::from_integer(0))
+    );
+}
+
+#[test]
+fn test_build_graphs_from_canon_splits_omits_graphs_with_fewer_than_two_edges() {
+    let last_step = LastStepIndices {
+        left_ext: 0b01,
+        right_ext: 0b10,
+        sums: vec![RangeId(0)],
+    };
+
+    let left_only = term(1, 1, &[index(2, 0)], vec![factor(1, &[0, 2])]);
+    let right_only = term(1, 1, &[index(2, 0)], vec![factor(3, &[2, 1])]);
+
+    let graphs = build_graphs_from_canon_splits(
+        &simple_def(1),
+        &[vec![pair(
+            left_only.clone(),
+            right_only.clone(),
+            right_only.clone(),
+            left_only.clone(),
+            &last_step,
+        )]],
+    );
+
+    assert!(graphs.is_empty());
+}

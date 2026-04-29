@@ -144,8 +144,11 @@ fn merge_edge(edge: &mut GraphEdge, term_idx: usize, term_coeff: &Rational) {
 fn finalize_graphs(buckets: HashMap<LastStepIndices, PendingGraph>) -> Vec<ConstrGraph> {
     buckets
         .into_iter()
-        .filter_map(|(last_step, pending)| {
-            // Task 2 intentionally keeps only multi-edge graphs; smaller buckets are omitted.
+        .filter_map(|(last_step, mut pending)| {
+            pending
+                .edges
+                .retain(|edge| edge.coeff != Rational::from_integer(0));
+
             if pending.edges.len() < 2 {
                 None
             } else {
