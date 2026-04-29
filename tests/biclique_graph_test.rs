@@ -495,3 +495,58 @@ fn test_build_graphs_from_canon_splits_omits_graphs_with_fewer_than_two_edges() 
 
     assert!(graphs.is_empty());
 }
+
+#[test]
+fn test_build_graphs_from_canon_splits_omits_graph_when_zero_pruning_leaves_one_edge() {
+    let last_step = LastStepIndices {
+        left_ext: 0b01,
+        right_ext: 0b10,
+        sums: vec![RangeId(0)],
+    };
+
+    let left_shared = term(1, 1, &[index(2, 0)], vec![factor(1, &[0, 2])]);
+    let left_other = term(1, 1, &[index(2, 0)], vec![factor(2, &[0, 2])]);
+    let right_shared = term(1, 1, &[index(2, 0)], vec![factor(3, &[2, 1])]);
+
+    let def = TensorDef {
+        base: TensorId(0),
+        ext_indices: vec![index(0, 0), index(1, 0)],
+        terms: vec![
+            term(1, 1, &[], vec![factor(99, &[0, 1])]),
+            term(-1, 1, &[], vec![factor(99, &[0, 1])]),
+            term(5, 1, &[], vec![factor(99, &[0, 1])]),
+        ],
+    };
+
+    let graphs = build_graphs_from_canon_splits(
+        &def,
+        &[
+            vec![pair(
+                left_shared.clone(),
+                right_shared.clone(),
+                right_shared.clone(),
+                left_shared.clone(),
+                &last_step,
+            )],
+            vec![pair(
+                left_shared.clone(),
+                right_shared.clone(),
+                right_shared.clone(),
+                left_shared.clone(),
+                &last_step,
+            )],
+            vec![pair(
+                left_other.clone(),
+                right_shared.clone(),
+                right_shared.clone(),
+                left_other.clone(),
+                &last_step,
+            )],
+        ],
+    );
+
+    assert!(
+        graphs.is_empty(),
+        "buckets that start with two edges must be omitted if zero pruning leaves one edge"
+    );
+}
