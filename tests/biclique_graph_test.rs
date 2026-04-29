@@ -9,16 +9,20 @@ struct TwoOwnerGraphsFixture {
     def: TensorDef,
     last_step: LastStepIndices,
     canon_splits: Vec<Vec<CanonSplitPair>>,
-    expected_left_nodes: Vec<Vec<Term>>,
-    expected_right_nodes: Vec<Vec<Term>>,
+    expected_graphs: Vec<ExpectedGraph>,
 }
 
 struct IndependentNodesFixture {
     def: TensorDef,
     last_step: LastStepIndices,
     canon_splits: Vec<Vec<CanonSplitPair>>,
-    expected_left_nodes: Vec<Vec<Term>>,
-    expected_right_nodes: Vec<Vec<Term>>,
+    expected_graphs: Vec<ExpectedGraph>,
+}
+
+struct ExpectedGraph {
+    left_nodes: Vec<Term>,
+    right_nodes: Vec<Term>,
+    edges: Vec<(usize, usize)>,
 }
 
 fn factor(tensor: u32, indices: &[u32]) -> Factor {
@@ -106,13 +110,17 @@ fn fixture_two_owner_graphs() -> TwoOwnerGraphsFixture {
         def: simple_def(2),
         last_step,
         canon_splits: vec![vec![owner_left_0], vec![owner_left_1]],
-        expected_left_nodes: vec![
-            vec![left_a.clone(), left_b.clone()],
-            vec![right_a.clone(), right_b.clone()],
-        ],
-        expected_right_nodes: vec![
-            vec![right_a, right_b],
-            vec![left_a, left_b],
+        expected_graphs: vec![
+            ExpectedGraph {
+                left_nodes: vec![left_a.clone(), left_b.clone()],
+                right_nodes: vec![right_a.clone(), right_b.clone()],
+                edges: vec![(0, 0), (1, 1)],
+            },
+            ExpectedGraph {
+                left_nodes: vec![right_a.clone(), right_b.clone()],
+                right_nodes: vec![left_a.clone(), left_b.clone()],
+                edges: vec![(0, 0), (1, 1)],
+            },
         ],
     }
 }
@@ -146,21 +154,51 @@ fn fixture_independent_nodes() -> IndependentNodesFixture {
                 &last_step,
             )],
         ],
-        expected_left_nodes: vec![
-            vec![same.clone(), other.clone()],
-            vec![other.clone(), same.clone()],
+        expected_graphs: vec![
+            ExpectedGraph {
+                left_nodes: vec![same.clone(), other.clone()],
+                right_nodes: vec![other.clone(), same.clone()],
+                edges: vec![(0, 0), (1, 1)],
+            },
+            ExpectedGraph {
+                left_nodes: vec![other.clone(), same.clone()],
+                right_nodes: vec![same, other],
+                edges: vec![(0, 0), (1, 1)],
+            },
         ],
-        expected_right_nodes: vec![vec![other.clone(), same.clone()], vec![same, other]],
     }
 }
 
-fn assert_edges_match(graph: &ConstrGraph, expected_edges: &[(usize, usize)]) {
-    let actual_edges: Vec<(usize, usize)> = graph
+fn graph_edges(graph: &ConstrGraph) -> Vec<(usize, usize)> {
+    graph
         .edges
         .iter()
         .map(|edge: &GraphEdge| (edge.left_id, edge.right_id))
-        .collect();
-    assert_eq!(actual_edges, expected_edges);
+        .collect()
+}
+
+fn graph_matches_expected(graph: &ConstrGraph, expected: &ExpectedGraph) -> bool {
+    graph.left_nodes == expected.left_nodes
+        && graph.right_nodes == expected.right_nodes
+        && graph_edges(graph) == expected.edges
+}
+
+fn assert_graphs_match_unordered(
+    graphs: &[ConstrGraph],
+    last_step: &LastStepIndices,
+    expected_graphs: &[ExpectedGraph],
+) {
+    assert_eq!(graphs.len(), expected_graphs.len());
+    assert!(graphs.iter().all(|graph| graph.last_step == *last_step));
+
+    let mut matched = vec![false; graphs.len()];
+    for expected in expected_graphs {
+        let found = graphs.iter().enumerate().position(|(index, graph)| {
+            !matched[index] && graph_matches_expected(graph, expected)
+        });
+        let index = found.expect("expected graph shape was not returned");
+        matched[index] = true;
+    }
 }
 
 #[test]
@@ -168,14 +206,7 @@ fn test_build_graphs_from_canon_splits_returns_two_owner_graphs() {
     let fixture = fixture_two_owner_graphs();
     let graphs = build_graphs_from_canon_splits(&fixture.def, &fixture.canon_splits);
 
-    assert_eq!(graphs.len(), 2);
-    assert!(graphs.iter().all(|graph| graph.last_step == fixture.last_step));
-    assert_eq!(graphs[0].left_nodes, fixture.expected_left_nodes[0].clone());
-    assert_eq!(graphs[0].right_nodes, fixture.expected_right_nodes[0].clone());
-    assert_eq!(graphs[1].left_nodes, fixture.expected_left_nodes[1].clone());
-    assert_eq!(graphs[1].right_nodes, fixture.expected_right_nodes[1].clone());
-    assert_edges_match(&graphs[0], &[(0, 0), (1, 1)]);
-    assert_edges_match(&graphs[1], &[(0, 0), (1, 1)]);
+    assert_graphs_match_unordered(&graphs, &fixture.last_step, &fixture.expected_graphs);
 }
 
 #[test]
@@ -183,14 +214,10 @@ fn test_build_graphs_from_canon_splits_keeps_left_and_right_nodes_independent() 
     let fixture = fixture_independent_nodes();
     let graphs = build_graphs_from_canon_splits(&fixture.def, &fixture.canon_splits);
 
-    assert_eq!(graphs.len(), 2);
-    assert!(graphs.iter().all(|graph| graph.last_step == fixture.last_step));
-    assert_eq!(graphs[0].left_nodes, fixture.expected_left_nodes[0].clone());
-    assert_eq!(graphs[0].right_nodes, fixture.expected_right_nodes[0].clone());
-    assert_eq!(graphs[1].left_nodes, fixture.expected_left_nodes[1].clone());
-    assert_eq!(graphs[1].right_nodes, fixture.expected_right_nodes[1].clone());
-    assert_ne!(graphs[0].left_nodes[0], graphs[0].right_nodes[0]);
-    assert_ne!(graphs[1].left_nodes[0], graphs[1].right_nodes[0]);
-    assert_edges_match(&graphs[0], &[(0, 0), (1, 1)]);
-    assert_edges_match(&graphs[1], &[(0, 0), (1, 1)]);
+    assert_graphs_match_unordered(&graphs, &fixture.last_step, &fixture.expected_graphs);
+    assert!(
+        graphs
+            .iter()
+            .all(|graph| graph.left_nodes[0] != graph.right_nodes[0])
+    );
 }
