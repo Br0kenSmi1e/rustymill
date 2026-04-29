@@ -401,6 +401,148 @@ fn test_build_graphs_from_canon_splits_ignores_duplicate_same_term_contribution(
 }
 
 #[test]
+fn test_build_graphs_from_canon_splits_moves_split_coeffs_to_edges() {
+    let last_step = LastStepIndices {
+        left_ext: 0b01,
+        right_ext: 0b10,
+        sums: vec![RangeId(0)],
+    };
+
+    let left_shared = term(2, 1, &[index(2, 0)], vec![factor(1, &[0, 2])]);
+    let left_other = term(-1, 1, &[index(2, 0)], vec![factor(2, &[0, 2])]);
+    let right_shared = term(3, 1, &[index(2, 0)], vec![factor(3, &[2, 1])]);
+
+    let def = TensorDef {
+        base: TensorId(0),
+        ext_indices: vec![index(0, 0), index(1, 0)],
+        terms: vec![
+            term(5, 1, &[], vec![factor(99, &[0, 1])]),
+            term(7, 1, &[], vec![factor(99, &[0, 1])]),
+        ],
+    };
+
+    let graphs = build_graphs_from_canon_splits(
+        &def,
+        &[
+            vec![pair(
+                left_shared.clone(),
+                right_shared.clone(),
+                right_shared.clone(),
+                left_shared.clone(),
+                &last_step,
+            )],
+            vec![pair(
+                left_other.clone(),
+                right_shared.clone(),
+                right_shared.clone(),
+                left_other.clone(),
+                &last_step,
+            )],
+        ],
+    );
+
+    let normalized_left_shared = term(1, 1, &[index(2, 0)], vec![factor(1, &[0, 2])]);
+    let normalized_left_other = term(1, 1, &[index(2, 0)], vec![factor(2, &[0, 2])]);
+    let normalized_right_shared = term(1, 1, &[index(2, 0)], vec![factor(3, &[2, 1])]);
+
+    let left_owner_graph = find_graph_by_nodes(
+        &graphs,
+        &[normalized_left_shared.clone(), normalized_left_other.clone()],
+        std::slice::from_ref(&normalized_right_shared),
+    );
+    let right_owner_graph = find_graph_by_nodes(
+        &graphs,
+        std::slice::from_ref(&normalized_right_shared),
+        &[normalized_left_shared.clone(), normalized_left_other.clone()],
+    );
+
+    assert_eq!(left_owner_graph.left_nodes[0].coeff, Ratio::from_integer(1));
+    assert_eq!(left_owner_graph.left_nodes[1].coeff, Ratio::from_integer(1));
+    assert_eq!(left_owner_graph.right_nodes[0].coeff, Ratio::from_integer(1));
+    assert_eq!(find_edge(left_owner_graph, 0, 0).coeff, Ratio::from_integer(30));
+    assert_eq!(find_edge(left_owner_graph, 1, 0).coeff, Ratio::from_integer(-21));
+
+    assert_eq!(right_owner_graph.left_nodes[0].coeff, Ratio::from_integer(1));
+    assert_eq!(right_owner_graph.right_nodes[0].coeff, Ratio::from_integer(1));
+    assert_eq!(right_owner_graph.right_nodes[1].coeff, Ratio::from_integer(1));
+    assert_eq!(find_edge(right_owner_graph, 0, 0).coeff, Ratio::from_integer(30));
+    assert_eq!(find_edge(right_owner_graph, 0, 1).coeff, Ratio::from_integer(-21));
+}
+
+#[test]
+fn test_build_graphs_from_canon_splits_merges_coeff_only_vertex_variants() {
+    let last_step = LastStepIndices {
+        left_ext: 0b01,
+        right_ext: 0b10,
+        sums: vec![RangeId(0)],
+    };
+
+    let left_variant_a = term(2, 1, &[index(2, 0)], vec![factor(1, &[0, 2])]);
+    let left_variant_b = term(-3, 1, &[index(2, 0)], vec![factor(1, &[0, 2])]);
+    let left_other = term(1, 1, &[index(2, 0)], vec![factor(2, &[0, 2])]);
+    let right_shared = term(1, 1, &[index(2, 0)], vec![factor(3, &[2, 1])]);
+
+    let def = TensorDef {
+        base: TensorId(0),
+        ext_indices: vec![index(0, 0), index(1, 0)],
+        terms: vec![
+            term(5, 1, &[], vec![factor(99, &[0, 1])]),
+            term(7, 1, &[], vec![factor(99, &[0, 1])]),
+            term(11, 1, &[], vec![factor(99, &[0, 1])]),
+        ],
+    };
+
+    let graphs = build_graphs_from_canon_splits(
+        &def,
+        &[
+            vec![pair(
+                left_variant_a.clone(),
+                right_shared.clone(),
+                right_shared.clone(),
+                left_variant_a.clone(),
+                &last_step,
+            )],
+            vec![pair(
+                left_variant_b.clone(),
+                right_shared.clone(),
+                right_shared.clone(),
+                left_variant_b.clone(),
+                &last_step,
+            )],
+            vec![pair(
+                left_other.clone(),
+                right_shared.clone(),
+                right_shared.clone(),
+                left_other.clone(),
+                &last_step,
+            )],
+        ],
+    );
+
+    let normalized_left_shared = term(1, 1, &[index(2, 0)], vec![factor(1, &[0, 2])]);
+    let normalized_left_other = term(1, 1, &[index(2, 0)], vec![factor(2, &[0, 2])]);
+    let normalized_right_shared = term(1, 1, &[index(2, 0)], vec![factor(3, &[2, 1])]);
+
+    let left_owner_graph = find_graph_by_nodes(
+        &graphs,
+        &[normalized_left_shared.clone(), normalized_left_other.clone()],
+        std::slice::from_ref(&normalized_right_shared),
+    );
+    let right_owner_graph = find_graph_by_nodes(
+        &graphs,
+        std::slice::from_ref(&normalized_right_shared),
+        &[normalized_left_shared.clone(), normalized_left_other.clone()],
+    );
+
+    assert_eq!(left_owner_graph.left_nodes.len(), 2);
+    assert_eq!(right_owner_graph.right_nodes.len(), 2);
+    assert_eq!(find_edge(left_owner_graph, 0, 0).coeff, Ratio::from_integer(-11));
+    assert_eq!(find_edge(left_owner_graph, 0, 0).terms_used, 0b11);
+    assert_eq!(find_edge(right_owner_graph, 0, 0).coeff, Ratio::from_integer(-11));
+    assert_eq!(find_edge(right_owner_graph, 0, 0).terms_used, 0b11);
+}
+
+#[test]
 fn test_build_graphs_from_canon_splits_drops_zero_coeff_edges() {
     let last_step = LastStepIndices {
         left_ext: 0b01,

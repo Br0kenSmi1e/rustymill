@@ -108,12 +108,15 @@ fn insert_split(
     term_idx: usize,
     term_coeff: &Rational,
 ) {
-    let left_id = ensure_left_node(graph, left_term);
-    let right_id = ensure_right_node(graph, right_term);
+    let (left_term, right_term, edge_coeff) =
+        normalize_edge_contribution(left_term, right_term, term_coeff);
+
+    let left_id = ensure_left_node(graph, &left_term);
+    let right_id = ensure_right_node(graph, &right_term);
     let edge_key = (left_id, right_id);
 
     if let Some(&edge_idx) = graph.edge_pos.get(&edge_key) {
-        merge_edge(&mut graph.edges[edge_idx], term_idx, term_coeff);
+        merge_edge(&mut graph.edges[edge_idx], term_idx, &edge_coeff);
     } else {
         let mut edge = GraphEdge {
             left_id,
@@ -121,10 +124,26 @@ fn insert_split(
             coeff: Ratio::from_integer(0),
             terms_used: 0,
         };
-        merge_edge(&mut edge, term_idx, term_coeff);
+        merge_edge(&mut edge, term_idx, &edge_coeff);
         graph.edge_pos.insert(edge_key, graph.edges.len());
         graph.edges.push(edge);
     }
+}
+
+fn normalize_edge_contribution(
+    left_term: &Term,
+    right_term: &Term,
+    term_coeff: &Rational,
+) -> (Term, Term, Rational) {
+    let edge_coeff = term_coeff.clone() * left_term.coeff.clone() * right_term.coeff.clone();
+
+    let mut normalized_left = left_term.clone();
+    normalized_left.coeff = Ratio::from_integer(1);
+
+    let mut normalized_right = right_term.clone();
+    normalized_right.coeff = Ratio::from_integer(1);
+
+    (normalized_left, normalized_right, edge_coeff)
 }
 
 fn merge_edge(edge: &mut GraphEdge, term_idx: usize, term_coeff: &Rational) {
