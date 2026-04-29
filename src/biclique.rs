@@ -36,13 +36,17 @@ pub fn build_graphs_from_canon_splits(
     def: &TensorDef,
     canon_splits: &[Vec<CanonSplitPair>],
 ) -> Vec<ConstrGraph> {
+    assert_eq!(
+        canon_splits.len(),
+        def.terms.len(),
+        "canon_splits must stay aligned with def.terms"
+    );
+
     let mut left_buckets: HashMap<LastStepIndices, PendingGraph> = HashMap::new();
     let mut right_buckets: HashMap<LastStepIndices, PendingGraph> = HashMap::new();
 
     for (term_idx, term_pairs) in canon_splits.iter().enumerate() {
-        let Some(term) = def.terms.get(term_idx) else {
-            break;
-        };
+        let term = &def.terms[term_idx];
         let term_coeff = term.coeff.clone();
 
         for pair in term_pairs {
@@ -124,9 +128,16 @@ fn insert_split(
 }
 
 fn merge_edge(edge: &mut GraphEdge, term_idx: usize, term_coeff: &Rational) {
-    edge.coeff += term_coeff.clone();
-    if term_idx < u64::BITS as usize {
-        edge.terms_used |= 1u64 << term_idx;
+    assert!(
+        term_idx < u64::BITS as usize,
+        "terms_used only supports up to {} terms in the MVP",
+        u64::BITS
+    );
+
+    let term_bit = 1u64 << term_idx;
+    if edge.terms_used & term_bit == 0 {
+        edge.coeff += term_coeff.clone();
+        edge.terms_used |= term_bit;
     }
 }
 
@@ -134,6 +145,7 @@ fn finalize_graphs(buckets: HashMap<LastStepIndices, PendingGraph>) -> Vec<Const
     buckets
         .into_iter()
         .filter_map(|(last_step, pending)| {
+            // Task 2 intentionally keeps only multi-edge graphs; smaller buckets are omitted.
             if pending.edges.len() < 2 {
                 None
             } else {
