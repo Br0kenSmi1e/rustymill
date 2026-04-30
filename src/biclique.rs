@@ -243,10 +243,6 @@ fn edge_between(graph: &ConstrGraph, left_id: usize, right_id: usize) -> Option<
         .find(|edge| edge.left_id == left_id && edge.right_id == right_id)
 }
 
-fn overlaps_terms(mask: u64, edge_terms: u64) -> bool {
-    mask & edge_terms != 0
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Biclique {
     pub left_node_ids: Vec<usize>,
@@ -401,16 +397,11 @@ fn update_delta(
 
     let edge = edge_between(graph, left_id, right_id)?;
 
-    if overlaps_terms(dq.terms, dr.terms) {
-        return None;
-    }
-    if overlaps_terms(biclique.terms_used, edge.terms_used) {
-        return None;
-    }
-    if overlaps_terms(dq.terms, edge.terms_used) {
-        return None;
-    }
-    if overlaps_terms(dr.terms, edge.terms_used) {
+    if dq.terms & dr.terms != 0
+        || biclique.terms_used & edge.terms_used != 0
+        || dq.terms & edge.terms_used != 0
+        || dr.terms & edge.terms_used != 0
+    {
         return None;
     }
 
