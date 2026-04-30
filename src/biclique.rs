@@ -247,12 +247,6 @@ fn overlaps_terms(mask: u64, edge_terms: u64) -> bool {
     mask & edge_terms != 0
 }
 
-fn is_root_left_seed(biclique: &Biclique, node: SearchNode) -> bool {
-    matches!(node, SearchNode::Left(_))
-        && biclique.left_node_ids.is_empty()
-        && biclique.right_node_ids.is_empty()
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Biclique {
     pub left_node_ids: Vec<usize>,
@@ -443,15 +437,7 @@ fn update_delta(
         return None;
     }
 
-    let q_coeff = if dq.terms == 0 {
-        assert!(
-            is_root_left_seed(biclique, q),
-            "only the first left seed may have placeholder coefficient semantics"
-        );
-        Ratio::from_integer(1)
-    } else {
-        dq.coeff.clone()
-    };
+    let q_coeff = dq.coeff.clone();
     let expected = edge.coeff.clone() / q_coeff;
 
     let mut next = dr.clone();
@@ -496,15 +482,7 @@ fn canonicalize_biclique(biclique: &Biclique) -> Biclique {
 
 fn push(biclique: &mut Biclique, node: SearchNode, delta: &Delta) {
     biclique.terms_used |= delta.terms;
-    let coeff = if delta.terms == 0 {
-        assert!(
-            is_root_left_seed(biclique, node),
-            "only the first left seed may have placeholder coefficient semantics"
-        );
-        Ratio::from_integer(1)
-    } else {
-        delta.coeff.clone()
-    };
+    let coeff = delta.coeff.clone();
     match node {
         SearchNode::Left(id) => {
             biclique.left_node_ids.push(id);
