@@ -59,6 +59,7 @@ fn sample_left_nodes() -> Vec<Term> {
     vec![
         term(1, 1, &[index(2, 0)], vec![factor(1, &[0, 2])]),
         term(1, 1, &[index(2, 0)], vec![factor(2, &[0, 2])]),
+        term(1, 1, &[index(2, 0)], vec![factor(6, &[0, 2])]),
     ]
 }
 
@@ -228,4 +229,33 @@ fn test_enumerate_bicliques_emits_only_the_maximal_2x3_rectangle_once() {
         ]
     );
     assert_eq!(biclique.terms_used, 0b111111);
+}
+
+#[test]
+fn test_enumerate_bicliques_ignores_non_current_left_pivots_after_bootstrap() {
+    let graph = graph(
+        sample_left_nodes(),
+        sample_right_nodes()[0..2].to_vec(),
+        &[
+            (0, 0, 10, 0b001000),
+            (0, 1, 20, 0b010000),
+            (1, 0, 2, 0b000001),
+            (1, 1, 4, 0b000010),
+            (2, 0, 6, 0b000100),
+            (2, 1, 12, 0b001000),
+        ],
+    );
+
+    let bicliques = enumerate_bicliques(&graph);
+    let biclique = find_biclique(&bicliques, &[1, 2], &[0, 1]);
+
+    assert_eq!(
+        biclique.left_coeffs,
+        vec![Ratio::from_integer(1), Ratio::from_integer(3)]
+    );
+    assert_eq!(
+        biclique.right_coeffs,
+        vec![Ratio::from_integer(2), Ratio::from_integer(4)]
+    );
+    assert_eq!(biclique.terms_used, 0b001111);
 }
