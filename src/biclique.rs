@@ -305,18 +305,6 @@ fn expand(
     }
 }
 
-fn is_branchable(biclique: &Biclique, node: SearchNode, delta: &Delta) -> bool {
-    if biclique.left_node_ids.is_empty() && biclique.right_node_ids.is_empty() {
-        return matches!(node, SearchNode::Left(_));
-    }
-
-    if biclique.left_node_ids.len() == 1 && biclique.right_node_ids.is_empty() {
-        return matches!(node, SearchNode::Right(_)) && delta.terms != 0;
-    }
-
-    delta.terms != 0
-}
-
 fn sift(
     biclique: &Biclique,
     cand: &[SearchNode],
@@ -334,24 +322,24 @@ fn sift(
     if biclique.left_node_ids.len() == 1 && biclique.right_node_ids.is_empty() {
         return cand
             .iter()
-            .filter(|node| matches!(subg.get(node), Some(delta) if is_branchable(biclique, **node, delta)))
+            .filter(|node| matches!(node, SearchNode::Right(_)))
+            .filter(|node| matches!(subg.get(node), Some(delta) if delta.terms != 0))
             .copied()
             .collect();
     }
 
-    let branchable: Vec<SearchNode> = cand
-        .iter()
-        .filter(|node| matches!(subg.get(node), Some(delta) if is_branchable(biclique, **node, delta)))
-        .copied()
-        .collect();
+    let curr = cand.to_vec();
 
     let mut best_forbidden = Vec::new();
     let mut best_score = 0usize;
-    for next in subgq.values() {
-        let forbidden: Vec<SearchNode> = next.keys().copied().collect();
+    for &q in &curr {
+        let forbidden: Vec<SearchNode> = subgq
+            .get(&q)
+            .map(|next| next.keys().copied().collect())
+            .unwrap_or_default();
         let score = forbidden
             .iter()
-            .filter(|node| branchable.contains(node))
+            .filter(|node| curr.contains(node))
             .count();
         if score > best_score {
             best_score = score;
@@ -359,17 +347,9 @@ fn sift(
         }
     }
 
-    let branch: Vec<SearchNode> = branchable
-        .iter()
+    curr.into_iter()
         .filter(|node| !best_forbidden.contains(node))
-        .copied()
-        .collect();
-
-    if branch.is_empty() {
-        branchable
-    } else {
-        branch
-    }
+        .collect()
 }
 
 fn build_child_frontiers(
@@ -380,9 +360,6 @@ fn build_child_frontiers(
     let mut out = HashMap::new();
 
     for (q, dq) in subg {
-        if !is_branchable(biclique, *q, dq) {
-            continue;
-        }
         let mut child = HashMap::new();
         for (r, dr) in subg {
             if q == r {
@@ -514,7 +491,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_sift_falls_back_to_cand_when_pivot_forbids_every_branchable_candidate() {
+    fn test_sift_ignores_non_current_pivots_when_filtering_branches() {
         let biclique = Biclique {
             left_node_ids: vec![1],
             right_node_ids: vec![0],
@@ -624,6 +601,9 @@ mod tests {
             ),
         ]);
 
-        assert_eq!(sift(&biclique, &cand, &subg, &subgq), cand);
+        assert_eq!(
+            sift(&biclique, &cand, &subg, &subgq),
+            vec![SearchNode::Left(2), SearchNode::Right(2)]
+        );
     }
 }
