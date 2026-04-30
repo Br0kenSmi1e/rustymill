@@ -191,3 +191,461 @@ fn sort_graphs_by_last_step(graphs: &mut [ConstrGraph]) {
             .then(a.last_step.sums.cmp(&b.last_step.sums))
     });
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum SearchNode {
+    Left(usize),
+    Right(usize),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Delta {
+    coeff: Rational,
+    terms: u64,
+}
+
+fn all_candidates(graph: &ConstrGraph) -> Vec<SearchNode> {
+    (0..graph.left_nodes.len())
+        .map(SearchNode::Left)
+        .chain((0..graph.right_nodes.len()).map(SearchNode::Right))
+        .collect()
+}
+
+fn initial_subg(graph: &ConstrGraph) -> HashMap<SearchNode, Delta> {
+    all_candidates(graph)
+        .into_iter()
+        .map(|node| {
+            (
+                node,
+                Delta {
+                    coeff: Ratio::from_integer(1),
+                    terms: 0,
+                },
+            )
+        })
+        .collect()
+}
+
+fn empty_biclique() -> Biclique {
+    Biclique {
+        left_node_ids: Vec::new(),
+        right_node_ids: Vec::new(),
+        left_coeffs: Vec::new(),
+        right_coeffs: Vec::new(),
+        terms_used: 0,
+    }
+}
+
+fn edge_between(graph: &ConstrGraph, left_id: usize, right_id: usize) -> Option<&GraphEdge> {
+    graph
+        .edges
+        .iter()
+        .find(|edge| edge.left_id == left_id && edge.right_id == right_id)
+}
+
+fn overlaps_terms(mask: u64, edge_terms: u64) -> bool {
+    mask & edge_terms != 0
+}
+
+fn is_root_left_seed(biclique: &Biclique, node: SearchNode) -> bool {
+    matches!(node, SearchNode::Left(_))
+        && biclique.left_node_ids.is_empty()
+        && biclique.right_node_ids.is_empty()
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Biclique {
+    pub left_node_ids: Vec<usize>,
+    pub right_node_ids: Vec<usize>,
+    pub left_coeffs: Vec<Rational>,
+    pub right_coeffs: Vec<Rational>,
+    pub terms_used: u64,
+}
+
+pub fn enumerate_bicliques(graph: &ConstrGraph) -> Vec<Biclique> {
+    if graph.edges.len() < 2 {
+        return Vec::new();
+    }
+
+    let mut biclique = empty_biclique();
+    let mut cand = all_candidates(graph);
+    let mut out = Vec::new();
+    let subg = initial_subg(graph);
+
+    expand(graph, &mut biclique, &subg, &mut cand, &mut out);
+    out
+}
+
+fn expand(
+    graph: &ConstrGraph,
+    biclique: &mut Biclique,
+    subg: &HashMap<SearchNode, Delta>,
+    cand: &mut Vec<SearchNode>,
+    out: &mut Vec<Biclique>,
+) {
+    if has_sharing(biclique) && subg.is_empty() {
+        out.push(canonicalize_biclique(biclique));
+        return;
+    }
+
+    let subgq = build_child_frontiers(graph, biclique, subg);
+    let curr = sift(biclique, cand, subg, &subgq);
+
+    for q in curr {
+        let Some(dq) = subg.get(&q) else { continue };
+        let Some(pos) = cand.iter().position(|node| *node == q) else {
+            continue;
+        };
+
+        let removed = cand.remove(pos);
+        let child_subg = subgq.get(&removed).cloned().unwrap_or_default();
+        let mut child_cand: Vec<SearchNode> = cand
+            .iter()
+            .copied()
+            .filter(|node| child_subg.contains_key(node))
+            .collect();
+
+        push(biclique, removed, dq);
+        expand(graph, biclique, &child_subg, &mut child_cand, out);
+        pop(biclique, removed, dq);
+    }
+}
+
+fn is_branchable(biclique: &Biclique, node: SearchNode, delta: &Delta) -> bool {
+    if biclique.left_node_ids.is_empty() && biclique.right_node_ids.is_empty() {
+        return matches!(node, SearchNode::Left(_));
+    }
+
+    if biclique.left_node_ids.len() == 1 && biclique.right_node_ids.is_empty() {
+        return matches!(node, SearchNode::Right(_)) && delta.terms != 0;
+    }
+
+    delta.terms != 0
+}
+
+fn sift(
+    biclique: &Biclique,
+    cand: &[SearchNode],
+    subg: &HashMap<SearchNode, Delta>,
+    subgq: &HashMap<SearchNode, HashMap<SearchNode, Delta>>,
+) -> Vec<SearchNode> {
+    if biclique.left_node_ids.is_empty() && biclique.right_node_ids.is_empty() {
+        return cand
+            .iter()
+            .filter(|node| matches!(node, SearchNode::Left(_)))
+            .copied()
+            .collect();
+    }
+
+    if biclique.left_node_ids.len() == 1 && biclique.right_node_ids.is_empty() {
+        return cand
+            .iter()
+            .filter(|node| matches!(subg.get(node), Some(delta) if is_branchable(biclique, **node, delta)))
+            .copied()
+            .collect();
+    }
+
+    let branchable: Vec<SearchNode> = cand
+        .iter()
+        .filter(|node| matches!(subg.get(node), Some(delta) if is_branchable(biclique, **node, delta)))
+        .copied()
+        .collect();
+
+    let mut best_forbidden = Vec::new();
+    let mut best_score = 0usize;
+    for next in subgq.values() {
+        let forbidden: Vec<SearchNode> = next.keys().copied().collect();
+        let score = forbidden
+            .iter()
+            .filter(|node| branchable.contains(node))
+            .count();
+        if score > best_score {
+            best_score = score;
+            best_forbidden = forbidden;
+        }
+    }
+
+    let branch: Vec<SearchNode> = branchable
+        .iter()
+        .filter(|node| !best_forbidden.contains(node))
+        .copied()
+        .collect();
+
+    if branch.is_empty() {
+        branchable
+    } else {
+        branch
+    }
+}
+
+fn build_child_frontiers(
+    graph: &ConstrGraph,
+    biclique: &Biclique,
+    subg: &HashMap<SearchNode, Delta>,
+) -> HashMap<SearchNode, HashMap<SearchNode, Delta>> {
+    let mut out = HashMap::new();
+
+    for (q, dq) in subg {
+        if !is_branchable(biclique, *q, dq) {
+            continue;
+        }
+        let mut child = HashMap::new();
+        for (r, dr) in subg {
+            if q == r {
+                continue;
+            }
+            if let Some(updated) = update_delta(graph, biclique, *q, dq, *r, dr) {
+                child.insert(*r, updated);
+            }
+        }
+        out.insert(*q, child);
+    }
+
+    out
+}
+
+fn update_delta(
+    graph: &ConstrGraph,
+    biclique: &Biclique,
+    q: SearchNode,
+    dq: &Delta,
+    r: SearchNode,
+    dr: &Delta,
+) -> Option<Delta> {
+    if matches!(
+        (q, r),
+        (SearchNode::Left(_), SearchNode::Left(_)) | (SearchNode::Right(_), SearchNode::Right(_))
+    ) {
+        if dq.terms & dr.terms != 0 {
+            return None;
+        }
+        return Some(dr.clone());
+    }
+
+    let (left_id, right_id) = match (q, r) {
+        (SearchNode::Left(left_id), SearchNode::Right(right_id)) => (left_id, right_id),
+        (SearchNode::Right(right_id), SearchNode::Left(left_id)) => (left_id, right_id),
+        _ => unreachable!(),
+    };
+
+    let edge = edge_between(graph, left_id, right_id)?;
+
+    if overlaps_terms(dq.terms, dr.terms) {
+        return None;
+    }
+    if overlaps_terms(biclique.terms_used, edge.terms_used) {
+        return None;
+    }
+    if overlaps_terms(dq.terms, edge.terms_used) {
+        return None;
+    }
+    if overlaps_terms(dr.terms, edge.terms_used) {
+        return None;
+    }
+
+    let q_coeff = if dq.terms == 0 {
+        assert!(
+            is_root_left_seed(biclique, q),
+            "only the first left seed may have placeholder coefficient semantics"
+        );
+        Ratio::from_integer(1)
+    } else {
+        dq.coeff.clone()
+    };
+    let expected = edge.coeff.clone() / q_coeff;
+
+    let mut next = dr.clone();
+    if dr.terms == 0 {
+        next.coeff = expected;
+    } else if dr.coeff != expected {
+        return None;
+    }
+    next.terms |= edge.terms_used;
+    Some(next)
+}
+
+fn has_sharing(biclique: &Biclique) -> bool {
+    biclique.left_node_ids.len() >= 2 || biclique.right_node_ids.len() >= 2
+}
+
+fn canonicalize_biclique(biclique: &Biclique) -> Biclique {
+    let mut left: Vec<(usize, Rational)> = biclique
+        .left_node_ids
+        .iter()
+        .copied()
+        .zip(biclique.left_coeffs.iter().cloned())
+        .collect();
+    left.sort_by_key(|(id, _)| *id);
+
+    let mut right: Vec<(usize, Rational)> = biclique
+        .right_node_ids
+        .iter()
+        .copied()
+        .zip(biclique.right_coeffs.iter().cloned())
+        .collect();
+    right.sort_by_key(|(id, _)| *id);
+
+    Biclique {
+        left_node_ids: left.iter().map(|(id, _)| *id).collect(),
+        right_node_ids: right.iter().map(|(id, _)| *id).collect(),
+        left_coeffs: left.into_iter().map(|(_, coeff)| coeff).collect(),
+        right_coeffs: right.into_iter().map(|(_, coeff)| coeff).collect(),
+        terms_used: biclique.terms_used,
+    }
+}
+
+fn push(biclique: &mut Biclique, node: SearchNode, delta: &Delta) {
+    biclique.terms_used |= delta.terms;
+    let coeff = if delta.terms == 0 {
+        assert!(
+            is_root_left_seed(biclique, node),
+            "only the first left seed may have placeholder coefficient semantics"
+        );
+        Ratio::from_integer(1)
+    } else {
+        delta.coeff.clone()
+    };
+    match node {
+        SearchNode::Left(id) => {
+            biclique.left_node_ids.push(id);
+            biclique.left_coeffs.push(coeff);
+        }
+        SearchNode::Right(id) => {
+            biclique.right_node_ids.push(id);
+            biclique.right_coeffs.push(coeff);
+        }
+    }
+}
+
+fn pop(biclique: &mut Biclique, node: SearchNode, delta: &Delta) {
+    biclique.terms_used ^= delta.terms;
+    match node {
+        SearchNode::Left(_) => {
+            biclique.left_node_ids.pop();
+            biclique.left_coeffs.pop();
+        }
+        SearchNode::Right(_) => {
+            biclique.right_node_ids.pop();
+            biclique.right_coeffs.pop();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sift_falls_back_to_cand_when_pivot_forbids_every_branchable_candidate() {
+        let biclique = Biclique {
+            left_node_ids: vec![1],
+            right_node_ids: vec![0],
+            left_coeffs: vec![Ratio::from_integer(1)],
+            right_coeffs: vec![Ratio::from_integer(2)],
+            terms_used: 0b1,
+        };
+
+        let cand = vec![SearchNode::Left(2), SearchNode::Right(1), SearchNode::Right(2)];
+
+        let subg = HashMap::from([
+            (
+                SearchNode::Left(0),
+                Delta {
+                    coeff: Ratio::from_integer(5),
+                    terms: 0b0100,
+                },
+            ),
+            (
+                SearchNode::Left(2),
+                Delta {
+                    coeff: Ratio::from_integer(3),
+                    terms: 0b1000,
+                },
+            ),
+            (
+                SearchNode::Right(1),
+                Delta {
+                    coeff: Ratio::from_integer(4),
+                    terms: 0b1_0000,
+                },
+            ),
+            (
+                SearchNode::Right(2),
+                Delta {
+                    coeff: Ratio::from_integer(6),
+                    terms: 0b10_0000,
+                },
+            ),
+        ]);
+
+        let subgq = HashMap::from([
+            (
+                SearchNode::Left(0),
+                HashMap::from([
+                    (
+                        SearchNode::Left(2),
+                        Delta {
+                            coeff: Ratio::from_integer(3),
+                            terms: 0b1000,
+                        },
+                    ),
+                    (
+                        SearchNode::Right(1),
+                        Delta {
+                            coeff: Ratio::from_integer(4),
+                            terms: 0b1_0000,
+                        },
+                    ),
+                    (
+                        SearchNode::Right(2),
+                        Delta {
+                            coeff: Ratio::from_integer(6),
+                            terms: 0b10_0000,
+                        },
+                    ),
+                ]),
+            ),
+            (
+                SearchNode::Left(2),
+                HashMap::from([
+                    (
+                        SearchNode::Left(0),
+                        Delta {
+                            coeff: Ratio::from_integer(5),
+                            terms: 0b0100,
+                        },
+                    ),
+                    (
+                        SearchNode::Right(1),
+                        Delta {
+                            coeff: Ratio::from_integer(4),
+                            terms: 0b1_0000,
+                        },
+                    ),
+                ]),
+            ),
+            (
+                SearchNode::Right(1),
+                HashMap::from([(
+                    SearchNode::Left(2),
+                    Delta {
+                        coeff: Ratio::from_integer(3),
+                        terms: 0b1000,
+                    },
+                )]),
+            ),
+            (
+                SearchNode::Right(2),
+                HashMap::from([(
+                    SearchNode::Left(2),
+                    Delta {
+                        coeff: Ratio::from_integer(3),
+                        terms: 0b1000,
+                    },
+                )]),
+            ),
+        ]);
+
+        assert_eq!(sift(&biclique, &cand, &subg, &subgq), cand);
+    }
+}
