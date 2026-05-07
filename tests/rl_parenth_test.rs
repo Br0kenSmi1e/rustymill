@@ -80,7 +80,7 @@ fn test_enumerate_splits_preserves_factor_order_and_resets_coeff() {
 }
 
 #[test]
-fn test_enumerate_splits_filters_sum_indices_to_selected_factors() {
+fn test_enumerate_splits_excludes_cross_split_contracted_sum_indices() {
     let (def, term) = make_abc_term();
 
     let splits = enumerate_splits(&term, &def);
@@ -91,10 +91,10 @@ fn test_enumerate_splits_filters_sum_indices_to_selected_factors() {
 
     assert_eq!(
         split.left_sub_term.sum_indices,
-        vec![Index { id: IndexId(2), range: RangeId(0) }]
+        Vec::<Index>::new()
     );
     assert_eq!(
         split.right_sub_term.sum_indices,
-        vec![Index { id: IndexId(2), range: RangeId(0) }, Index { id: IndexId(3), range: RangeId(1) }]
+        vec![Index { id: IndexId(3), range: RangeId(1) }]
     );
 }

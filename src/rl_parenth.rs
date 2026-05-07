@@ -78,7 +78,11 @@ fn subset_ext_bits(info: &TermIndexInfo, subset: FactorSubset) -> u64 {
     bits
 }
 
-fn make_sub_term(term: &Term, subset: FactorSubset) -> Term {
+fn contracted_sum_bits(left_sum_bits: u64, right_sum_bits: u64) -> u64 {
+    left_sum_bits & right_sum_bits
+}
+
+fn make_sub_term(term: &Term, subset: FactorSubset, contracted_sum_bits: u64) -> Term {
     let mut factors = Vec::new();
     let mut s = subset;
     while s != 0 {
@@ -97,7 +101,11 @@ fn make_sub_term(term: &Term, subset: FactorSubset) -> Term {
     let sum_indices: Vec<Index> = term
         .sum_indices
         .iter()
-        .filter(|idx| present_ids.contains(&idx.id))
+        .enumerate()
+        .filter(|(bit, idx)| {
+            present_ids.contains(&idx.id) && contracted_sum_bits & (1u64 << bit) == 0
+        })
+        .map(|(_, idx)| idx)
         .cloned()
         .collect();
 
@@ -108,13 +116,9 @@ fn make_sub_term(term: &Term, subset: FactorSubset) -> Term {
     }
 }
 
-fn contracted_sum_ranges(
-    term: &Term,
-    left_sum_bits: u64,
-    right_sum_bits: u64,
-) -> Vec<RangeId> {
+fn contracted_sum_ranges(term: &Term, contracted_sum_bits: u64) -> Vec<RangeId> {
     let mut sums = Vec::new();
-    let mut bits = left_sum_bits & right_sum_bits;
+    let mut bits = contracted_sum_bits;
     while bits != 0 {
         let bit = bits.trailing_zeros() as usize;
         sums.push(term.sum_indices[bit].range);
@@ -158,11 +162,12 @@ pub fn enumerate_splits(term: &Term, def: &TensorDef) -> Vec<TermSplit> {
 
             let left_sum_bits = subset_sum_bits(&info, left);
             let right_sum_bits = subset_sum_bits(&info, right);
-            let sums = contracted_sum_ranges(term, left_sum_bits, right_sum_bits);
+            let contracted_bits = contracted_sum_bits(left_sum_bits, right_sum_bits);
+            let sums = contracted_sum_ranges(term, contracted_bits);
 
             splits.push(TermSplit {
-                left_sub_term: make_sub_term(term, left),
-                right_sub_term: make_sub_term(term, right),
+                left_sub_term: make_sub_term(term, left, contracted_bits),
+                right_sub_term: make_sub_term(term, right, contracted_bits),
                 last_step: LastStepIndices {
                     left_ext,
                     right_ext,
