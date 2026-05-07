@@ -53,23 +53,15 @@ pub fn next_action_space(comp: &TensorComputation, start_from: usize) -> Option<
             continue;
         }
 
-        let mut valid_candidates = Vec::new();
-        let mut candidate_templates = Vec::new();
-        for candidate in candidates {
-            if validate_candidate_record_against_definition(def, &candidate).is_err() {
-                continue;
-            }
-            candidate_templates.push(export_candidate_template(def, &candidate, left_tid, right_tid));
-            valid_candidates.push(candidate);
-        }
-        if valid_candidates.is_empty() {
-            continue;
-        }
+        let candidate_templates: Vec<Factorization> = candidates
+            .iter()
+            .map(|candidate| export_candidate_template(def, candidate, left_tid, right_tid))
+            .collect();
 
         return Some(ActionSpace {
             def_index,
             candidate_templates,
-            candidates: valid_candidates,
+            candidates,
         });
     }
 
@@ -156,157 +148,6 @@ fn candidate_record(
     })
 }
 
-fn validate_candidate_record_against_definition(
-    def: &TensorDef,
-    record: &CandidateRecord,
-) -> Result<(), String> {
-    validate_side_alignment(
-        &record.biclique.left_node_ids,
-        &record.biclique.left_coeffs,
-        "left",
-    )?;
-    validate_side_alignment(
-        &record.biclique.right_node_ids,
-        &record.biclique.right_coeffs,
-        "right",
-    )?;
-    validate_nonempty_biclique(&record.biclique)?;
-    validate_mask_references(
-        record.graph.last_step.left_ext,
-        def.ext_indices.len(),
-        "left_ext",
-    )?;
-    validate_mask_references(
-        record.graph.last_step.right_ext,
-        def.ext_indices.len(),
-        "right_ext",
-    )?;
-    validate_graph_edges_against_definition(def, &record.graph)?;
-    validate_biclique_rectangle_against_definition(def, &record.graph, &record.biclique)?;
-    Ok(())
-}
-
-fn validate_side_alignment(
-    node_ids: &[usize],
-    coeffs: &[Ratio<i64>],
-    side: &str,
-) -> Result<(), String> {
-    if node_ids.len() != coeffs.len() {
-        return Err(format!(
-            "{side} node ids and coeffs length mismatch: {} vs {}",
-            node_ids.len(),
-            coeffs.len()
-        ));
-    }
-    Ok(())
-}
-
-fn validate_nonempty_biclique(biclique: &Biclique) -> Result<(), String> {
-    if biclique.left_node_ids.is_empty() {
-        return Err("candidate biclique left side is empty".to_string());
-    }
-    if biclique.right_node_ids.is_empty() {
-        return Err("candidate biclique right side is empty".to_string());
-    }
-    Ok(())
-}
-
-fn validate_mask_references(mask: u64, source_len: usize, label: &str) -> Result<(), String> {
-    if source_len < u64::BITS as usize && (mask >> source_len) != 0 {
-        return Err(format!(
-            "{label} mask references external indices out of bounds"
-        ));
-    }
-    Ok(())
-}
-
-fn validate_graph_edges_against_definition(
-    def: &TensorDef,
-    graph: &ConstrGraph,
-) -> Result<(), String> {
-    for edge in &graph.edges {
-        if edge.left_id >= graph.left_nodes.len() {
-            return Err(format!(
-                "candidate graph edge left_id {} out of bounds for {} left nodes",
-                edge.left_id,
-                graph.left_nodes.len()
-            ));
-        }
-        if edge.right_id >= graph.right_nodes.len() {
-            return Err(format!(
-                "candidate graph edge right_id {} out of bounds for {} right nodes",
-                edge.right_id,
-                graph.right_nodes.len()
-            ));
-        }
-        for term_idx in bits_to_vec(edge.terms_used) {
-            if term_idx >= def.terms.len() {
-                return Err(format!(
-                    "candidate graph references term {} but definition has only {} terms",
-                    term_idx,
-                    def.terms.len()
-                ));
-            }
-        }
-    }
-    Ok(())
-}
-
-fn validate_biclique_rectangle_against_definition(
-    def: &TensorDef,
-    graph: &ConstrGraph,
-    biclique: &Biclique,
-) -> Result<(), String> {
-    let id_to_range: HashMap<IndexId, _> = def
-        .terms
-        .iter()
-        .flat_map(|term| term.sum_indices.iter().map(|index| (index.id, index.range)))
-        .collect();
-
-    let mut expected_interface: Option<Vec<Index>> = None;
-    for &left_id in &biclique.left_node_ids {
-        let left_term = graph.left_nodes.get(left_id).ok_or_else(|| {
-            format!(
-                "candidate biclique left node id {} out of bounds for {} left nodes",
-                left_id,
-                graph.left_nodes.len()
-            )
-        })?;
-        for &right_id in &biclique.right_node_ids {
-            let right_term = graph.right_nodes.get(right_id).ok_or_else(|| {
-                format!(
-                    "candidate biclique right node id {} out of bounds for {} right nodes",
-                    right_id,
-                    graph.right_nodes.len()
-                )
-            })?;
-            if !graph
-                .edges
-                .iter()
-                .any(|edge| edge.left_id == left_id && edge.right_id == right_id)
-            {
-                return Err(format!(
-                    "candidate biclique rectangle is missing edge ({left_id}, {right_id})"
-                ));
-            }
-
-            let pair_interface = contracted_indices_for_pair(left_term, right_term, &id_to_range);
-            if let Some(expected) = &expected_interface {
-                if &pair_interface != expected {
-                    return Err(
-                        "candidate biclique rectangle has inconsistent contracted interface"
-                            .to_string(),
-                    );
-                }
-            } else {
-                expected_interface = Some(pair_interface);
-            }
-        }
-    }
-
-    Ok(())
-}
-
 fn sub_biclique_from_decision(record: &CandidateRecord, decision: &Decision) -> Biclique {
     let left_node_ids: Vec<usize> = record
         .biclique
@@ -369,19 +210,8 @@ pub fn build_rewrite_from_decision(
 ) -> Result<FactorizationRewrite, String> {
     let def = target_definition(comp, space.def_index)?;
     validate_decision(space, decision)?;
-
-    let visible_template = candidate_template(space, decision.candidate_index)?;
     let record = candidate_record(space, decision.candidate_index)?;
-    validate_candidate_record_against_definition(def, record)?;
     let (left_tid, right_tid) = fresh_rewrite_tensor_ids(comp);
-    let expected_template = export_candidate_template(def, record, left_tid, right_tid);
-    if *visible_template != expected_template {
-        return Err(format!(
-            "candidate template {} no longer matches its hidden candidate",
-            decision.candidate_index
-        ));
-    }
-
     let sub_biclique = sub_biclique_from_decision(record, decision);
     let factorization = build_factorization(def, &record.graph, &sub_biclique, left_tid, right_tid);
 
@@ -397,7 +227,6 @@ pub fn apply_factorization_rewrite(
 ) -> Result<(), String> {
     verify_rewrite_tensor_ids(comp, &rewrite)?;
     verify_rewrite_def_index(comp, &rewrite)?;
-    verify_rewrite_target_definition(comp, &rewrite)?;
     register_rewrite_tensors(comp);
     replace_definition_with_factorization(comp, rewrite);
     Ok(())
@@ -430,22 +259,6 @@ fn verify_rewrite_def_index(
             "def_index {} out of range for {} definitions",
             rewrite.def_index,
             comp.definitions().len()
-        ));
-    }
-
-    Ok(())
-}
-
-fn verify_rewrite_target_definition(
-    comp: &TensorComputation,
-    rewrite: &FactorizationRewrite,
-) -> Result<(), String> {
-    let current = target_definition(comp, rewrite.def_index)?;
-    let expected = &rewrite.factorization.rewritten_definition;
-    if current.base != expected.base || current.ext_indices != expected.ext_indices {
-        return Err(format!(
-            "target definition mismatch at index {}: expected base {}, got base {}",
-            rewrite.def_index, expected.base.0, current.base.0
         ));
     }
 
@@ -498,67 +311,14 @@ fn enumerate_candidate_records(comp: &TensorComputation, def: &TensorDef) -> Vec
     let mut candidates = Vec::new();
     for graph in build_graphs_from_canon_splits(def, &canon_splits) {
         for biclique in enumerate_bicliques(&graph) {
-            candidates.push(normalize_candidate_record(
-                def,
-                CandidateRecord {
-                    graph: graph.clone(),
-                    biclique,
-                },
-            ));
+            candidates.push(CandidateRecord {
+                graph: graph.clone(),
+                biclique,
+            });
         }
     }
 
     candidates
-}
-
-fn normalize_candidate_record(def: &TensorDef, mut record: CandidateRecord) -> CandidateRecord {
-    let contracted_ids: HashSet<IndexId> =
-        contracted_indices_for_biclique(def, &record.graph, &record.biclique)
-            .into_iter()
-            .map(|index| index.id)
-            .collect();
-
-    normalize_biclique_side(
-        &record.graph.left_nodes,
-        &mut record.biclique.left_node_ids,
-        &mut record.biclique.left_coeffs,
-        &contracted_ids,
-    );
-    normalize_biclique_side(
-        &record.graph.right_nodes,
-        &mut record.biclique.right_node_ids,
-        &mut record.biclique.right_coeffs,
-        &contracted_ids,
-    );
-
-    record
-}
-
-fn normalize_biclique_side(
-    source_nodes: &[Term],
-    biclique_node_ids: &mut Vec<usize>,
-    biclique_coeffs: &mut Vec<Ratio<i64>>,
-    contracted_ids: &HashSet<IndexId>,
-) {
-    assert_eq!(
-        biclique_node_ids.len(),
-        biclique_coeffs.len(),
-        "biclique node ids and coeffs must stay aligned",
-    );
-
-    let mut paired: Vec<(usize, Ratio<i64>, TermSortKey)> = biclique_node_ids
-        .iter()
-        .copied()
-        .zip(biclique_coeffs.iter().cloned())
-        .map(|(node_id, coeff)| {
-            let term = build_side_term(source_nodes, node_id, &coeff, contracted_ids);
-            (node_id, coeff, term_sort_key(&term))
-        })
-        .collect();
-    paired.sort_by(|a, b| a.2.cmp(&b.2));
-
-    *biclique_node_ids = paired.iter().map(|(node_id, _, _)| *node_id).collect();
-    *biclique_coeffs = paired.into_iter().map(|(_, coeff, _)| coeff).collect();
 }
 
 fn fresh_rewrite_tensor_ids(comp: &TensorComputation) -> (TensorId, TensorId) {
@@ -582,9 +342,7 @@ fn build_side_term(
     coeff: &Ratio<i64>,
     contracted_ids: &HashSet<IndexId>,
 ) -> Term {
-    let source = source_nodes
-        .get(node_id)
-        .expect("biclique node id must be in bounds");
+    let source = &source_nodes[node_id];
     let mut term = source.clone();
     term.coeff = source.coeff.clone() * coeff.clone();
     term.sum_indices
@@ -602,10 +360,6 @@ fn build_factorization(
     let contracted = contracted_indices_for_biclique(def, graph, biclique);
     let (left_ext, right_ext) = side_external_indices(def, graph);
     let consumed = consumed_term_indices(graph, biclique);
-    assert!(
-        consumed.iter().all(|&term_idx| term_idx < def.terms.len()),
-        "biclique consumed term index must refer to a source term",
-    );
 
     let left_definition = build_side_definition(
         &graph.left_nodes,
@@ -643,61 +397,26 @@ fn contracted_indices_for_biclique(
     graph: &ConstrGraph,
     biclique: &Biclique,
 ) -> Vec<Index> {
-    assert!(
-        !biclique.left_node_ids.is_empty(),
-        "biclique must contain at least one left node",
-    );
-    assert!(
-        !biclique.right_node_ids.is_empty(),
-        "biclique must contain at least one right node",
-    );
-
     let id_to_range: HashMap<IndexId, _> = def
         .terms
         .iter()
         .flat_map(|term| term.sum_indices.iter().map(|index| (index.id, index.range)))
         .collect();
 
-    let mut rectangle_interface: Option<Vec<Index>> = None;
-    for &left_id in &biclique.left_node_ids {
-        let left_term = graph
-            .left_nodes
-            .get(left_id)
-            .expect("biclique left node id must be in bounds");
-        for &right_id in &biclique.right_node_ids {
-            let right_term = graph
-                .right_nodes
-                .get(right_id)
-                .expect("biclique right node id must be in bounds");
-            assert!(
-                graph
-                    .edges
-                    .iter()
-                    .any(|edge| edge.left_id == left_id && edge.right_id == right_id),
-                "biclique rectangle must contain every edge",
-            );
-
-            let pair_interface = contracted_indices_for_pair(left_term, right_term, &id_to_range);
-            match &rectangle_interface {
-                None => rectangle_interface = Some(pair_interface),
-                Some(expected) => assert_eq!(
-                    &pair_interface, expected,
-                    "biclique rectangle must have a consistent contracted interface",
-                ),
-            }
-        }
+    match (
+        biclique.left_node_ids.first().copied(),
+        biclique.right_node_ids.first().copied(),
+    ) {
+        (Some(left_id), Some(right_id)) => contracted_indices_for_pair(
+            &graph.left_nodes[left_id],
+            &graph.right_nodes[right_id],
+            &id_to_range,
+        ),
+        _ => Vec::new(),
     }
-
-    rectangle_interface.unwrap_or_default()
 }
 
 fn side_external_indices(def: &TensorDef, graph: &ConstrGraph) -> (Vec<Index>, Vec<Index>) {
-    assert_mask_in_bounds(graph.last_step.left_ext, def.ext_indices.len(), "left_ext");
-    assert_mask_in_bounds(
-        graph.last_step.right_ext,
-        def.ext_indices.len(),
-        "right_ext",
-    );
     (
         bits_to_indices(graph.last_step.left_ext, &def.ext_indices),
         bits_to_indices(graph.last_step.right_ext, &def.ext_indices),
@@ -716,20 +435,14 @@ fn build_side_definition(
     contracted: &[Index],
     tensor: TensorId,
 ) -> TensorDef {
-    assert_eq!(
-        biclique_node_ids.len(),
-        biclique_coeffs.len(),
-        "biclique node ids and coeffs must stay aligned",
-    );
     let contracted_ids: HashSet<IndexId> = contracted.iter().map(|index| index.id).collect();
     let ext_indices: Vec<Index> = side_ext.iter().chain(contracted.iter()).copied().collect();
 
-    let mut terms: Vec<Term> = biclique_node_ids
+    let terms: Vec<Term> = biclique_node_ids
         .iter()
         .zip(biclique_coeffs.iter())
         .map(|(&node_id, coeff)| build_side_term(source_nodes, node_id, coeff, &contracted_ids))
         .collect();
-    terms.sort_by_key(term_sort_key);
 
     TensorDef {
         base: tensor,
@@ -745,10 +458,6 @@ fn build_rewritten_definition(
     contracted: &[Index],
     consumed: &[usize],
 ) -> TensorDef {
-    assert!(
-        consumed.iter().all(|&term_idx| term_idx < def.terms.len()),
-        "consumed term index must be in bounds",
-    );
     let consumed: HashSet<usize> = consumed.iter().copied().collect();
     let replacement = Term {
         coeff: Ratio::from_integer(1),
@@ -807,29 +516,13 @@ fn contracted_indices_for_pair(
         }
     }
 
-    contracted.sort_by_key(|index| (index.range.0, index.id.0));
     contracted
 }
-
-fn assert_mask_in_bounds(mask: u64, source_len: usize, label: &str) {
-    if source_len < u64::BITS as usize {
-        assert_eq!(
-            mask >> source_len,
-            0,
-            "{label} mask references external indices out of bounds",
-        );
-    }
-}
-
 fn bits_to_indices(mut mask: u64, source: &[Index]) -> Vec<Index> {
     let mut out = Vec::new();
     while mask != 0 {
         let bit = mask.trailing_zeros() as usize;
-        out.push(
-            *source
-                .get(bit)
-                .expect("bitmask must reference an in-bounds external index"),
-        );
+        out.push(source[bit]);
         mask &= mask - 1;
     }
     out
@@ -842,28 +535,6 @@ fn bits_to_vec(mut mask: u64) -> Vec<usize> {
         mask &= mask - 1;
     }
     out
-}
-
-type TermSortKey = (i64, i64, Vec<(u32, u32)>, Vec<(u32, Vec<u32>)>);
-
-fn term_sort_key(term: &Term) -> TermSortKey {
-    (
-        *term.coeff.numer(),
-        *term.coeff.denom(),
-        term.sum_indices
-            .iter()
-            .map(|index| (index.id.0, index.range.0))
-            .collect(),
-        term.factors
-            .iter()
-            .map(|factor| {
-                (
-                    factor.tensor.0,
-                    factor.indices.iter().map(|index| index.0).collect(),
-                )
-            })
-            .collect(),
-    )
 }
 
 #[cfg(test)]
@@ -881,7 +552,7 @@ mod tests {
     }
 
     #[test]
-    fn test_build_rewrite_from_decision_uses_visible_template_term_order_for_masks() {
+    fn test_build_rewrite_from_decision_preserves_candidate_order_for_masks() {
         let mut comp = TensorComputation::new();
         let occ = comp.add_range(10);
         let target = comp.add_tensor(vec![]);
@@ -931,59 +602,56 @@ mod tests {
             source_def.terms.clone(),
         );
 
-        let record = normalize_candidate_record(
-            &source_def,
-            CandidateRecord {
-                graph: ConstrGraph {
-                    last_step: LastStepIndices {
-                        left_ext: 0b1,
-                        right_ext: 0,
-                        sums: vec![occ],
+        let record = CandidateRecord {
+            graph: ConstrGraph {
+                last_step: LastStepIndices {
+                    left_ext: 0b1,
+                    right_ext: 0,
+                    sums: vec![occ],
+                },
+                left_nodes: vec![
+                    unit_term(vec![Factor {
+                        tensor: high,
+                        indices: vec![a, c],
+                    }]),
+                    unit_term(vec![Factor {
+                        tensor: low,
+                        indices: vec![a, c],
+                    }]),
+                ],
+                right_nodes: vec![unit_term(vec![Factor {
+                    tensor: shared,
+                    indices: vec![c],
+                }])],
+                edges: vec![
+                    GraphEdge {
+                        left_id: 0,
+                        right_id: 0,
+                        coeff: Ratio::from_integer(1),
+                        terms_used: 0b01,
                     },
-                    left_nodes: vec![
-                        unit_term(vec![Factor {
-                            tensor: high,
-                            indices: vec![a, c],
-                        }]),
-                        unit_term(vec![Factor {
-                            tensor: low,
-                            indices: vec![a, c],
-                        }]),
-                    ],
-                    right_nodes: vec![unit_term(vec![Factor {
-                        tensor: shared,
-                        indices: vec![c],
-                    }])],
-                    edges: vec![
-                        GraphEdge {
-                            left_id: 0,
-                            right_id: 0,
-                            coeff: Ratio::from_integer(1),
-                            terms_used: 0b01,
-                        },
-                        GraphEdge {
-                            left_id: 1,
-                            right_id: 0,
-                            coeff: Ratio::from_integer(1),
-                            terms_used: 0b10,
-                        },
-                    ],
-                },
-                biclique: Biclique {
-                    left_node_ids: vec![0, 1],
-                    right_node_ids: vec![0],
-                    left_coeffs: vec![Ratio::from_integer(1), Ratio::from_integer(1)],
-                    right_coeffs: vec![Ratio::from_integer(1)],
-                    terms_used: 0b11,
-                },
+                    GraphEdge {
+                        left_id: 1,
+                        right_id: 0,
+                        coeff: Ratio::from_integer(1),
+                        terms_used: 0b10,
+                    },
+                ],
             },
-        );
-        assert_eq!(record.biclique.left_node_ids, vec![1, 0]);
+            biclique: Biclique {
+                left_node_ids: vec![0, 1],
+                right_node_ids: vec![0],
+                left_coeffs: vec![Ratio::from_integer(1), Ratio::from_integer(1)],
+                right_coeffs: vec![Ratio::from_integer(1)],
+                terms_used: 0b11,
+            },
+        };
 
         let (left_tid, right_tid) = fresh_rewrite_tensor_ids(&comp);
         let template = export_candidate_template(&source_def, &record, left_tid, right_tid);
         assert_eq!(template.left_definition.terms.len(), 2);
-        assert_eq!(template.left_definition.terms[0].factors[0].tensor, low);
+        assert_eq!(template.left_definition.terms[0].factors[0].tensor, high);
+        assert_eq!(template.left_definition.terms[1].factors[0].tensor, low);
 
         let space = ActionSpace {
             def_index: 0,
@@ -997,104 +665,12 @@ mod tests {
         };
 
         let rewrite = build_rewrite_from_decision(&comp, &space, &decision)
-            .expect("mask should select the first visible left term");
+            .expect("mask should select the first candidate left term");
 
         assert_eq!(
             rewrite.factorization.left_definition.terms,
             vec![template.left_definition.terms[0].clone()]
         );
-    }
-
-    #[test]
-    fn test_build_rewrite_from_decision_rejects_mutated_visible_template() {
-        let mut comp = TensorComputation::new();
-        let target = comp.add_tensor(vec![]);
-        let x = comp.add_tensor(vec![]);
-        let y = comp.add_tensor(vec![]);
-        let p = comp.add_tensor(vec![]);
-        let q = comp.add_tensor(vec![]);
-        let occ = comp.add_range(10);
-        let virt = comp.add_range(12);
-
-        let a = Index { id: IndexId(0), range: occ };
-        let b = Index { id: IndexId(1), range: virt };
-        let c = Index { id: IndexId(2), range: virt };
-
-        comp.add_definition(
-            target,
-            vec![a],
-            vec![
-                Term {
-                    coeff: Ratio::from_integer(1),
-                    sum_indices: vec![b, c],
-                    factors: vec![
-                        Factor {
-                            tensor: x,
-                            indices: vec![a.id, b.id],
-                        },
-                        Factor {
-                            tensor: p,
-                            indices: vec![b.id],
-                        },
-                    ],
-                },
-                Term {
-                    coeff: Ratio::from_integer(1),
-                    sum_indices: vec![b, c],
-                    factors: vec![
-                        Factor {
-                            tensor: x,
-                            indices: vec![a.id, b.id],
-                        },
-                        Factor {
-                            tensor: q,
-                            indices: vec![b.id],
-                        },
-                    ],
-                },
-                Term {
-                    coeff: Ratio::from_integer(1),
-                    sum_indices: vec![b, c],
-                    factors: vec![
-                        Factor {
-                            tensor: y,
-                            indices: vec![a.id, c.id],
-                        },
-                        Factor {
-                            tensor: p,
-                            indices: vec![c.id],
-                        },
-                    ],
-                },
-                Term {
-                    coeff: Ratio::from_integer(1),
-                    sum_indices: vec![b, c],
-                    factors: vec![
-                        Factor {
-                            tensor: y,
-                            indices: vec![a.id, c.id],
-                        },
-                        Factor {
-                            tensor: q,
-                            indices: vec![c.id],
-                        },
-                    ],
-                },
-            ],
-        );
-
-        let mut space = next_action_space(&comp, 0).expect("fixture should be actionable");
-        space.candidate_templates[0].left_definition.terms.pop();
-
-        let decision = Decision {
-            candidate_index: 0,
-            left_mask: vec![true],
-            right_mask: vec![true; space.candidate_templates[0].right_definition.terms.len()],
-        };
-
-        let err = build_rewrite_from_decision(&comp, &space, &decision)
-            .expect_err("mutated visible template should be rejected");
-        assert!(err.contains("no longer matches"));
     }
 
     #[test]

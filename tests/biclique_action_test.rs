@@ -147,10 +147,6 @@ fn make_actionable_comp() -> TensorComputation {
     make_actionable_comp_with_term_order([0, 1, 2, 3])
 }
 
-fn make_reordered_actionable_comp() -> TensorComputation {
-    make_actionable_comp_with_term_order([2, 0, 3, 1])
-}
-
 fn actionable_space() -> ActionSpace {
     let comp = make_actionable_comp();
     next_action_space(&comp, 0).expect("expected actionable biclique space for fixture")
@@ -259,20 +255,6 @@ fn test_next_action_space_exports_factorization_templates() {
     assert!(!template.left_definition.terms.is_empty());
     assert!(!template.right_definition.terms.is_empty());
     assert_eq!(template.rewritten_definition.base, comp.definitions()[0].base);
-}
-
-#[test]
-fn test_next_action_space_is_stable_under_term_reordering() {
-    let comp_a = make_actionable_comp();
-    let comp_b = make_reordered_actionable_comp();
-
-    let space_a = next_action_space(&comp_a, 0)
-        .expect("expected action space for canonical full-biclique fixture");
-    let space_b = next_action_space(&comp_b, 0)
-        .expect("expected action space for reordered full-biclique fixture");
-
-    assert_eq!(space_a.def_index, space_b.def_index);
-    assert_eq!(space_a.candidate_templates, space_b.candidate_templates);
 }
 
 #[test]
@@ -394,30 +376,7 @@ fn test_apply_factorization_rewrite_installs_strict_left_subset_factorization() 
 }
 
 #[test]
-fn test_build_rewrite_from_decision_rejects_stale_action_space_after_definition_change() {
-    let original = make_actionable_comp();
-    let space =
-        next_action_space(&original, 0).expect("expected actionable biclique space for fixture");
-    let template = &space.candidate_templates[0];
-    let decision = Decision {
-        candidate_index: 0,
-        left_mask: vec![true; template.left_definition.terms.len()],
-        right_mask: vec![true; template.right_definition.terms.len()],
-    };
-
-    let mut stale_comp = original.clone();
-    stale_comp.definitions_mut()[0].ext_indices.pop();
-
-    let err = build_rewrite_from_decision(&stale_comp, &space, &decision)
-        .expect_err("stale action space should be rejected without panicking");
-    assert!(
-        err.contains("candidate") || err.contains("mask") || err.contains("definition"),
-        "{err}"
-    );
-}
-
-#[test]
-fn test_apply_factorization_rewrite_rejects_wrong_current_definition() {
+fn test_apply_factorization_rewrite_allows_target_definition_drift() {
     let mut comp = make_actionable_comp();
     let space =
         next_action_space(&comp, 0).expect("expected actionable biclique space for fixture");
@@ -430,22 +389,60 @@ fn test_apply_factorization_rewrite_rejects_wrong_current_definition() {
 
     let rewrite = build_rewrite_from_decision(&comp, &space, &decision)
         .expect("expected rewrite for full-biclique selection");
+    let expected = rewrite.factorization.clone();
 
-    comp.definitions_mut().insert(
-        0,
-        TensorDef {
-            base: TensorId(1),
-            ext_indices: vec![],
-            terms: vec![Term {
-                coeff: Ratio::from_integer(1),
-                sum_indices: vec![],
-                factors: vec![],
-            }],
+    comp.definitions_mut()[0] = TensorDef {
+        base: TensorId(1),
+        ext_indices: vec![],
+        terms: vec![Term {
+            coeff: Ratio::from_integer(1),
+            sum_indices: vec![],
+            factors: vec![],
+        }],
+    };
+
+    apply_factorization_rewrite(&mut comp, rewrite)
+        .expect("apply should trust the provided rewrite once boundary checks pass");
+
+    assert_eq!(comp.definitions()[0], expected.left_definition);
+    assert_eq!(comp.definitions()[1], expected.right_definition);
+    assert_eq!(comp.definitions()[2], expected.rewritten_definition);
+}
+
+#[test]
+fn test_apply_factorization_rewrite_rejects_out_of_range_def_index() {
+    let mut comp = make_actionable_comp();
+    let mut rewrite = FactorizationRewrite {
+        def_index: comp.definitions().len(),
+        factorization: Factorization {
+            left_definition: TensorDef {
+                base: comp.next_tensor_id(),
+                ext_indices: vec![],
+                terms: vec![],
+            },
+            right_definition: TensorDef {
+                base: TensorId(comp.next_tensor_id().0 + 1),
+                ext_indices: vec![],
+                terms: vec![],
+            },
+            rewritten_definition: TensorDef {
+                base: comp.definitions()[0].base,
+                ext_indices: comp.definitions()[0].ext_indices.clone(),
+                terms: comp.definitions()[0].terms.clone(),
+            },
         },
-    );
+    };
+
+    let err = apply_factorization_rewrite(&mut comp, rewrite.clone())
+        .expect_err("apply should reject rewrites with def_index out of range");
+    assert!(err.contains("def_index"), "{err}");
+    assert!(err.contains("out of range"), "{err}");
+
+    rewrite.def_index = 0;
+    rewrite.factorization.left_definition.base = TensorId(0);
+    rewrite.factorization.right_definition.base = TensorId(1);
 
     let err = apply_factorization_rewrite(&mut comp, rewrite)
-        .expect_err("apply should reject rewrites targeting the wrong current definition");
-    assert!(err.contains("target definition"), "{err}");
-    assert!(err.contains("mismatch"), "{err}");
+        .expect_err("fresh tensor ids should still be enforced");
+    assert!(err.contains("tensor ids mismatch"), "{err}");
 }
